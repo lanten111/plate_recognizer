@@ -1,12 +1,23 @@
 #!/bin/python3
-
-from datetime import datetime
+import statistics
+import threading
 import concurrent.futures
 import os
 import sqlite3
 import time
 import logging
+import uuid
+from datetime import datetime
+from multiprocessing import Process
+from tkinter.font import names
+from typing import Tuple, Any
 
+from cv2 import Mat
+from ha_mqtt_discoverable import Settings, DeviceInfo
+from ha_mqtt_discoverable.sensors import Sensor, SensorInfo
+
+import cv2
+import numpy as np
 import paho.mqtt.client as mqtt
 import yaml
 import sys
@@ -17,6 +28,9 @@ import io
 from PIL import Image, ImageDraw, ImageFont
 import difflib
 
+from fast_alpr import ALPR
+from numpy import ndarray, dtype
+
 mqtt_client = None
 config = None
 first_message = True
@@ -25,9 +39,10 @@ _LOGGER = None
 executor = None
 
 VERSION = '2.1.1'
-
+from concurrent.futures import ThreadPoolExecutor
+executor = ThreadPoolExecutor(max_workers=5)
 # set local paths for development
-LOCAL = os.getenv('LOCAL', False)
+LOCAL = os.getenv('LOCAL', True)
 
 CONFIG_PATH = f"{'' if LOCAL else '/'}config/config.yml"
 DB_PATH = f"{'' if LOCAL else '/'}config/frigate_plate_recogizer.db"
@@ -36,7 +51,10 @@ SNAPSHOT_PATH = f"{'' if LOCAL else '/'}plates"
 
 DATETIME_FORMAT = "%Y-%m-%d_%H-%M"
 
-PLATE_RECOGIZER_BASE_URL = 'https://api.platerecognizer.com/v1/plate-reader'
+# UNIQUE_ID = "licence_plate_sensor"
+# DISCOVERY_TOPIC = f"homeassistant/sensor/{UNIQUE_ID}/config"
+# STATE_TOPIC = f"homeassistant/sensor/{UNIQUE_ID}/state"
+
 DEFAULT_OBJECTS = ['car', 'motorcycle', 'bus']
 CURRENT_EVENTS = {}
 
@@ -82,69 +100,14 @@ def set_sublabel(frigate_url, frigate_event_id, sublabel, score):
     else:
         _LOGGER.error(f"Failed to set sublabel. Status code: {response.status_code}")
 
-def code_project(image):
-    api_url = config['code_project'].get('api_url')
-
-    response = requests.post(
-        api_url,
-        files=dict(upload=image),
+def get_alpr():
+    plate_detector_model = config['fast_alpr'].get('plate_detector_model')
+    ocr_model = config['fast_alpr'].get('ocr_model')
+    return ALPR(
+        detector_model=plate_detector_model,
+        ocr_model=ocr_model,ocr_device="cpu",ocr_model_path=CONFIG_PATH + "/models"
     )
-    response = response.json()
-    _LOGGER.debug(f"response: {response}")
-
-    if response.get('predictions') is None:
-        _LOGGER.error(f"Failed to get plate number. Response: {response}")
-        return None, None, None, None
-
-    if len(response['predictions']) == 0:
-        _LOGGER.debug(f"No plates found")
-        return None, None, None, None
-
-    plate_number = response['predictions'][0].get('plate')
-    score = response['predictions'][0].get('confidence')
-    
-    watched_plate, watched_score, fuzzy_score = check_watched_plates(plate_number, response['predictions'])   
-    if fuzzy_score:
-        return plate_number, score, watched_plate, fuzzy_score
-    elif watched_plate: 
-        return plate_number, watched_score, watched_plate, None
-    else:
-        return plate_number, score, None, None
-
-def plate_recognizer(image):
-    api_url = config['plate_recognizer'].get('api_url') or PLATE_RECOGIZER_BASE_URL
-    token = config['plate_recognizer']['token']
-
-    response = requests.post(
-        api_url,
-        data=dict(regions=config['plate_recognizer']['regions']),
-        files=dict(upload=image),
-        headers={'Authorization': f'Token {token}'}
-    )
-
-    response = response.json()
-    _LOGGER.debug(f"response: {response}")
-
-    if response.get('results') is None:
-        _LOGGER.error(f"Failed to get plate number. Response: {response}")
-        return None, None, None, None
-
-    if len(response['results']) == 0:
-        _LOGGER.debug(f"No plates found")
-        return None, None, None, None
-
-    plate_number = response['results'][0].get('plate')
-    score = response['results'][0].get('score')
-    
-    watched_plate, watched_score, fuzzy_score = check_watched_plates(plate_number, response['results'][0].get('candidates'))
-    if fuzzy_score:
-        return plate_number, score, watched_plate, fuzzy_score
-    elif watched_plate: 
-        return plate_number, watched_score, watched_plate, None
-    else:
-        return plate_number, score, None, None
-
-def fast_alpr(image):
+def fast_alpr(snapshot):
     plate_detector_model = config['fast_alpr'].get('plate_detector_model')
     ocr_model = config['fast_alpr'].get('ocr_model')
     alpr = ALPR(
@@ -152,10 +115,12 @@ def fast_alpr(image):
         ocr_model=ocr_model,ocr_device="cpu",ocr_model_path=CONFIG_PATH + "/models"
     )
 
-    image1 = Image.open(io.BytesIO(image))
-    image_np = np.array(image1)
+    image_array = np.frombuffer(snapshot, np.uint8)
+    frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
 
-    alpr_results = alpr.predict(image_np)
+    alpr_results = get_alpr().predict(frame)
+
+    print(alpr_results)
 
     for result in alpr_results:
         ocr_text = result.ocr.text
@@ -218,101 +183,83 @@ def check_watched_plates(plate_number, response):
     return None, None, None
     
 def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score):
-    if not config['frigate'].get('return_topic'):
-        return
+    SENSOR_NAME = "License Plate Detection"
+    UNIQUE_ID = "license_plate_sensor_001"
+    DISCOVERY_TOPIC = f"homeassistant/sensor/{UNIQUE_ID}/config"
+    STATE_TOPIC = f"homeassistant/sensor/{UNIQUE_ID}/state"
+
+    mqtt_settings = Settings.MQTT(host=config['frigate']['mqtt_server'], username=config['frigate']['mqtt_username'], password=config['frigate'].get('mqtt_password', ''))
+
+    # # device_info = DeviceInfo(name="License Plate Detector", identifiers="device_id_aa")
+    # plate_number_sensor_info = SensorInfo(name="License Plate Detector", device_class="motion", unique_id="my_motion_sensor")
+    # plate_number_sensor_settings = Settings(mqtt=mqtt_settings, entity=plate_number_sensor_info)
+    # plate_number_sensor = Sensor(plate_number_sensor_settings)
+    # plate_number_sensor.set_state(str(watched_plate or plate_number).upper())
+
+    message = {
+        'plate_number': str(watched_plate or plate_number).upper(),
+        'score': plate_score,
+        'frigate_event_id': frigate_event_id,
+        'camera_name': after_data['camera'],
+        'start_time': formatted_start_time
+    }
 
     if watched_plate:
-        message = {
-            'plate_number': str(watched_plate).upper(),
-            'score': plate_score,
-            'frigate_event_id': frigate_event_id,
-            'camera_name': after_data['camera'],
-            'start_time': formatted_start_time,
+        message.update({
             'fuzzy_score': fuzzy_score,
             'original_plate': str(plate_number).upper()
+        })
+
+    config_payload = {
+        "name": SENSOR_NAME,
+        "state_topic": STATE_TOPIC,
+        "json_attributes_topic": STATE_TOPIC,
+        "unit_of_measurement": None,  # No specific unit for this data
+        "device_class": None,         # No specific device class
+        "unique_id": UNIQUE_ID,
+        "availability_topic": f"homeassistant/sensor/{UNIQUE_ID}/availability",
+        "payload_available": "online",
+        "payload_not_available": "offline",
+        "device": {
+            "identifiers": [UNIQUE_ID],
+            "name": "License Plate Detection Device",
+            "model": "Custom Model",
+            "manufacturer": "My Manufacturer"
         }
-    else:
-        message = {
-            'plate_number': str(plate_number).upper(),
-            'score': plate_score,
-            'frigate_event_id': frigate_event_id,
-            'camera_name': after_data['camera'],
-            'start_time': formatted_start_time
-        }
+    }
 
-    _LOGGER.debug(f"Sending MQTT message: {message}")
-
-    main_topic = config['frigate']['main_topic']
-    return_topic = config['frigate']['return_topic']
-    topic = f'{main_topic}/{return_topic}'
-
-    mqtt_client.publish(topic, json.dumps(message))
+    mqtt_client.publish(DISCOVERY_TOPIC, json.dumps(config_payload), qos=1, retain=True)
+    mqtt_client.publish(f"homeassistant/sensor/{UNIQUE_ID}/availability", "online", qos=1, retain=True)
+    mqtt_client.publish(STATE_TOPIC, json.dumps(message), qos=1, retain=False)
 
 def has_common_value(array1, array2):
     return any(value in array2 for value in array1)
 
-def save_image(config, after_data, frigate_url, frigate_event_id, plate_number):
-    if not config['frigate'].get('save_snapshots', False):
-        _LOGGER.debug(f"Skipping saving snapshot because save_snapshots is set to false")
-        return
-    
-    # get latest Event Data from Frigate API
-    event_url = f"{frigate_url}/api/events/{frigate_event_id}"
-    
-    final_attribute = get_final_data(event_url) 
-         
-    # get latest snapshot
-    snapshot = get_snapshot(frigate_event_id, frigate_url, False)
-    if not snapshot:
-        return
-
-    image = Image.open(io.BytesIO(bytearray(snapshot)))
-    draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("./Arial.ttf", size=14)
-    
-    if final_attribute:
-        image_width, image_height = image.size
-        dimension_1 = final_attribute[0]['box'][0]
-        dimension_2 = final_attribute[0]['box'][1]
-        dimension_3 = final_attribute[0]['box'][2]
-        dimension_4 = final_attribute[0]['box'][3]
-
-        plate = (
-            dimension_1 * image_width,
-            dimension_2 * image_height,
-            (dimension_1 + dimension_3) * image_width,
-            (dimension_2 + dimension_4) * image_height
-        )
-        draw.rectangle(plate, outline="red", width=2) 
-        _LOGGER.debug(f"Drawing Plate Box: {plate}")
-        
-        if plate_number:
-            draw.text(
-                (
-                    (dimension_1 * image_width)+  5,
-                    ((dimension_2 + dimension_4) * image_height) + 5
-                ), 
-                str(plate_number).upper(), 
-                font=font
-            )      
-
-    # save image
+def save_image(config,plate_score,snapshot, after_data, frigate_url, frigate_event_id, plate_number):
+    os.makedirs(SNAPSHOT_PATH, exist_ok=True)
     timestamp = datetime.now().strftime(DATETIME_FORMAT)
     image_name = f"{after_data['camera']}_{timestamp}.png"
     if plate_number:
-        image_name = f"{str(plate_number).upper()}_{image_name}"
-
+        image_name = f"{str(plate_number).upper()}_{int(plate_score* 100)}%_{image_name}"
     image_path = f"{SNAPSHOT_PATH}/{image_name}"
-    _LOGGER.info(f"Saving image with path: {image_path}")
-    image.save(image_path)
 
-def check_first_message():
-    global first_message
-    if first_message:
-        first_message = False
-        _LOGGER.debug("Skipping first message")
-        return True
-    return False
+    image_array = np.frombuffer(snapshot, np.uint8)
+    frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    # frame = cv2.imread(snapshot)
+    annotated_frame = get_alpr().draw_predictions(frame)
+    cv2.imwrite(image_path, annotated_frame)
+
+    # with open(image_path, "wb") as file:
+    #     file.write(snapshot)
+    _LOGGER.info(f"Saving image with path: {image_path}")
+
+# def check_first_message():
+#     global first_message
+#     if first_message:
+#         first_message = False
+#         _LOGGER.debug("Skipping first message")
+#         return True
+#     return False
 
 def check_invalid_event(before_data, after_data):
     # check if it is from the correct camera or zone
@@ -333,27 +280,67 @@ def check_invalid_event(before_data, after_data):
         _LOGGER.debug(f"is not a correct label: {after_data['label']}")
         return True
 
-    # limit api calls to plate checker api by only checking the best score for an event
-    if(before_data['top_score'] == after_data['top_score'] and after_data['id'] in CURRENT_EVENTS) and not config['frigate'].get('frigate_plus', False):
-        _LOGGER.debug(f"duplicated snapshot from Frigate as top_score from before and after are the same: {after_data['top_score']} {after_data['id']}")
-        return True
+    # # limit api calls to plate checker api by only checking the best score for an event
+    # if(before_data['top_score'] == after_data['top_score'] and after_data['id'] in CURRENT_EVENTS) and not config['frigate'].get('frigate_plus', False):
+    #     _LOGGER.debug(f"duplicated snapshot from Frigate as top_score from before and after are the same: {after_data['top_score']} {after_data['id']}")
+    #     return True
     return False
 
-def get_snapshot(frigate_event_id, frigate_url, cropped):
+
+def get_latest_snapshot(frigate_event_id, frigate_url, camera_name):
+    timestamp = datetime.now()
+    start_time = time.time()
+    print(f"*********{timestamp} Getting snapshot for event: {frigate_event_id}")
+    snapshot_url = f"{frigate_url}/api/{camera_name}/latest.jpg"
+
+    _LOGGER.debug(f"event URL: {snapshot_url}")
+
+    parameters = {"quality": 100}
+    response = requests.get(snapshot_url, params=parameters)
+    snapshot = response.content
+    # thread = threading.Thread(
+    #     target=save_snap,
+    #     args=(snapshot, camera_name),
+    #     daemon=True,
+    # )
+    # thread.start()
+    print(f"*********{timestamp} done snapshot for event: {frigate_event_id}")
+    end_time = time.time()
+    duration = end_time - start_time
+    print(f"*********The process took {duration:.2f} seconds to complete.")
+    return snapshot
+
+def save_snap(snapshot, camera_name):
+    test_image_dir = SNAPSHOT_PATH + "/test"
+    os.makedirs(test_image_dir, exist_ok=True)
+    timestamp = datetime.now().strftime(DATETIME_FORMAT)
+    image_name = f"{camera_name}_{timestamp}_{uuid.uuid4()}.png"
+    image_path = f"{test_image_dir}/{image_name}"
+    with open(image_path, "wb") as file:
+        file.write(snapshot)
+        print(f"{timestamp} saved snapshot {image_path}")
+
+def get_snapshot(frigate_event_id, frigate_url, cropped, camera_name):
     _LOGGER.debug(f"Getting snapshot for event: {frigate_event_id}, Crop: {cropped}")
-    snapshot_url = f"{frigate_url}/api/events/{frigate_event_id}/snapshot.jpg"
+    snapshot_url = f"{frigate_url}/api/events/{frigate_event_id}/snapshot-clean.png"
     _LOGGER.debug(f"event URL: {snapshot_url}")
 
     # get snapshot
-    parameters = {"crop": 1 if cropped else 0, "quality": 95}
+    parameters = {"crop": 1 if cropped else 0, "quality": 100}
     response = requests.get(snapshot_url, params=parameters)
-
+    snapshot = response.content
+    thread = threading.Thread(
+        target=save_snap,
+        args=(snapshot, camera_name),
+        daemon=True,
+    )
+    thread.start()
     # Check if the request was successful (HTTP status code 200)
     if response.status_code != 200:
         _LOGGER.error(f"Error getting snapshot: {response.status_code}")
         return
 
-    return response.content
+    return snapshot
 
 def get_license_plate_attribute(after_data):
     if config['frigate'].get('frigate_plus', False):
@@ -382,20 +369,20 @@ def get_final_data(event_url):
         return None
     
 
-def is_valid_license_plate(after_data):
-    # if user has frigate plus then check license plate attribute
-    after_license_plate_attribute = get_license_plate_attribute(after_data)
-    if not any(after_license_plate_attribute):
-        _LOGGER.debug(f"no license_plate attribute found in event attributes")
-        return False
-
-    # check min score of license plate attribute
-    license_plate_min_score = config['frigate'].get('license_plate_min_score', 0)
-    if after_license_plate_attribute[0]['score'] < license_plate_min_score:
-        _LOGGER.debug(f"license_plate attribute score is below minimum: {after_license_plate_attribute[0]['score']}")
-        return False
-
-    return True
+# def is_valid_license_plate(after_data):
+#     # if user has frigate plus then check license plate attribute
+#     after_license_plate_attribute = get_license_plate_attribute(after_data)
+#     if not any(after_license_plate_attribute):
+#         _LOGGER.debug(f"no license_plate attribute found in event attributes")
+#         return False
+#
+#     # check min score of license plate attribute
+#     license_plate_min_score = config['frigate'].get('license_plate_min_score', 0)
+#     if after_license_plate_attribute[0]['score'] < license_plate_min_score:
+#         _LOGGER.debug(f"license_plate attribute score is below minimum: {after_license_plate_attribute[0]['score']}")
+#         return False
+#
+#     return True
 
 def is_duplicate_event(frigate_event_id):
      # see if we have already processed this event
@@ -416,11 +403,7 @@ def get_plate(snapshot):
     plate_number = None
     plate_score = None
 
-    if config.get('plate_recognizer'):
-        plate_number, plate_score , watched_plate, fuzzy_score = plate_recognizer(snapshot)
-    elif config.get('code_project'):
-        plate_number, plate_score, watched_plate, fuzzy_score = code_project(snapshot)
-    elif config.get('fast_alpr'):
+    if config.get('fast_alpr'):
         plate_number, plate_score, watched_plate, fuzzy_score = fast_alpr(snapshot)
     else:
         _LOGGER.error("Plate Recognizer is not configured")
@@ -435,6 +418,7 @@ def get_plate(snapshot):
         return None, None, None, None
 
     return plate_number, plate_score, watched_plate, fuzzy_score
+
 
 def store_plate_in_db(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time):
     conn = sqlite3.connect(DB_PATH)
@@ -454,54 +438,88 @@ def on_message(client, userdata, message):
     executor.submit(process_message, message)
 
 def process_message(message):
-    if check_first_message():
-        return
 
-    # get frigate event payload
+    global event_type
     payload_dict = json.loads(message.payload)
-    _LOGGER.debug(f'mqtt message: {payload_dict}')
+    _LOGGER.debug(f"MQTT message: {payload_dict}")
 
-    before_data = payload_dict.get('before', {})
-    after_data = payload_dict.get('after', {})
-    type = payload_dict.get('type','')
-    
-    frigate_url = config['frigate']['frigate_url']
-    frigate_event_id = after_data['id']
-    
-    if type == 'end' and after_data['id'] in CURRENT_EVENTS:
-        _LOGGER.debug(f"CLEARING EVENT: {frigate_event_id} after {CURRENT_EVENTS[frigate_event_id]} calls to AI engine")
-        if frigate_event_id in CURRENT_EVENTS:
-            del CURRENT_EVENTS[frigate_event_id]
-    
+    before_data = payload_dict.get("before", {})
+    after_data = payload_dict.get("after", {})
+    event_type = payload_dict.get("type", "")
+    frigate_url = config["frigate"]["frigate_url"]
+    frigate_event_id = after_data["id"]
+
     if check_invalid_event(before_data, after_data):
         return
 
     if is_duplicate_event(frigate_event_id):
         return
 
-    frigate_plus = config['frigate'].get('frigate_plus', False)
-    if frigate_plus and not is_valid_license_plate(after_data):
-        return
-    
-    if not type == 'end' and not after_data['id'] in CURRENT_EVENTS:
-        CURRENT_EVENTS[frigate_event_id] =  0
-    
-    # get snapshot if it exists
-    snapshot = None
-    if after_data['has_snapshot']:
-        snapshot = get_snapshot(frigate_event_id, frigate_url, True)
-    if not snapshot:
-        _LOGGER.debug(f"Event {frigate_event_id} has no snapshot")
-        if frigate_event_id in CURRENT_EVENTS:
-            del CURRENT_EVENTS[frigate_event_id] # remove existing id from current events due to snapshot failure - will try again next frame
-        return
+    if event_type == "new":
+        print(f"Starting new thread for {event_type} for {frigate_event_id}")
+        thread = threading.Thread(
+            target=get_snapshots,
+            args=(before_data, after_data, frigate_url, frigate_event_id),
+            daemon=True,
+        )
+        thread.start()
 
-    _LOGGER.debug(f"Getting plate for event: {frigate_event_id}")
-    if frigate_event_id in CURRENT_EVENTS:
-        if config['frigate'].get('max_attempts', 0) > 0 and CURRENT_EVENTS[frigate_event_id] > config['frigate'].get('max_attempts', 0):
-            _LOGGER.debug(f"Maximum number of AI attempts reached for event {frigate_event_id}: {CURRENT_EVENTS[frigate_event_id]}")
-            return
-        CURRENT_EVENTS[frigate_event_id] += 1
+def get_snapshots(before_data, after_data, frigate_url, frigate_event_id):
+    global event_type
+    while event_type in ["update", "new"]:
+        timestamp = datetime.now()
+        print(f"{timestamp} Getting snapshot {event_type} for {frigate_event_id}")
+        start_time = time.time()
+        snapshot = get_latest_snapshot(frigate_event_id, frigate_url, after_data['camera'])
+        # snapshot = get_snapshot(frigate_event_id, frigate_url, 0, after_data['camera'])
+        # thread = threading.Thread(
+        #     target=process_snapshot,
+        #     args=(before_data, after_data, frigate_url, frigate_event_id, snapshot),
+        #     daemon=True,
+        # )
+        # thread.start()
+        executor.submit(process_snapshot, before_data, after_data, frigate_url, frigate_event_id, snapshot)
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"The process took {duration:.2f} seconds to complete.")
+        timestamp = datetime.now()
+        print(f"{timestamp} Done getting snapshot {event_type} for {frigate_event_id}")
+
+    print(f"Done processing event {frigate_event_id}, {event_type}")
+
+def process_snapshot(before_data, after_data, frigate_url, frigate_event_id, snapshot):
+
+    
+    # if type == 'end' and after_data['id'] in CURRENT_EVENTS:
+    #     _LOGGER.debug(f"CLEARING EVENT: {frigate_event_id} after {CURRENT_EVENTS[frigate_event_id]} calls to AI engine")
+    #     if frigate_event_id in CURRENT_EVENTS:
+    #         del CURRENT_EVENTS[frigate_event_id]
+    
+
+
+    # frigate_plus = config['frigate'].get('frigate_plus', False)
+    # if frigate_plus and not is_valid_license_plate(after_data):
+    #     return
+    
+    # if not type == 'end' and not after_data['id'] in CURRENT_EVENTS:
+    #     CURRENT_EVENTS[frigate_event_id] =  0
+
+    # get snapshot if it exists
+    # snapshot = None
+    # if after_data['has_snapshot']:
+    #     snapshot = get_snapshot(frigate_event_id, frigate_url, True)
+    # if not snapshot:
+    #     _LOGGER.debug(f"Event {frigate_event_id} has no snapshot")
+    #     if frigate_event_id in CURRENT_EVENTS:
+    #         del CURRENT_EVENTS[frigate_event_id] # remove existing id from current events due to snapshot failure - will try again next frame
+    #     return
+
+    # _LOGGER.debug(f"Getting plate for event: {frigate_event_id}")
+    # if frigate_event_id in CURRENT_EVENTS:
+    #     if config['frigate'].get('max_attempts', 0) > 0 and CURRENT_EVENTS[frigate_event_id] > config['frigate'].get('max_attempts', 0):
+    #         _LOGGER.debug(f"Maximum number of AI attempts reached for event {frigate_event_id}: {CURRENT_EVENTS[frigate_event_id]}")
+    #         return
+    #     CURRENT_EVENTS[frigate_event_id] += 1
 
     plate_number, plate_score, watched_plate, fuzzy_score = get_plate(snapshot)
     if plate_number:
@@ -516,14 +534,10 @@ def process_message(message):
 
         send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score)
          
-    if plate_number or config['frigate'].get('always_save_snapshot', False):
-        save_image(
-            config=config,
-            after_data=after_data,
-            frigate_url=frigate_url,
-            frigate_event_id=frigate_event_id,
-            plate_number=watched_plate if watched_plate else plate_number
-        )
+    if plate_number and config['frigate'].get('save_snapshots', False):
+        save_image(config,plate_score,snapshot,after_data,frigate_url,frigate_event_id,plate_number=watched_plate if watched_plate else plate_number)
+
+
 
 def setup_db():
     conn = sqlite3.connect(DB_PATH)
@@ -534,8 +548,9 @@ def setup_db():
             detection_time TIMESTAMP NOT NULL,
             score TEXT NOT NULL,
             plate_number TEXT NOT NULL,
-            frigate_event TEXT NOT NULL UNIQUE,
-            camera_name TEXT NOT NULL
+            frigate_event TEXT NOT NULL,
+            camera_name TEXT NOT NULL,
+            created_date DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()
@@ -561,13 +576,29 @@ def run_mqtt_client():
     mqtt_client.on_disconnect = on_disconnect
     mqtt_client.on_message = on_message
 
-    # check if we are using authentication and set username/password if so
+
+    # sensor_config = {
+    #     "name": "License Plate Sensor",
+    #     "state_topic": STATE_TOPIC,
+    #     "unit_of_measurement": "",  # No specific unit for this example
+    #     "value_template": "{{ value_json.plate_number }}",
+    #     "json_attributes_topic": "homeassistant/vehicle/license_plate/attributes",  # Send additional data as attributes
+    #     "device": {
+    #         "identifiers": UNIQUE_ID,
+    #         "name": "License Plate Detector",
+    #         "model": "Custom Sensor v1",
+    #         "manufacturer": "My Sensors Inc.",
+    #     },
+    #     "unique_id": UNIQUE_ID,
+    # }
+
     if config['frigate'].get('mqtt_username', False):
         username = config['frigate']['mqtt_username']
         password = config['frigate'].get('mqtt_password', '')
         mqtt_client.username_pw_set(username, password)
 
     mqtt_client.connect(config['frigate']['mqtt_server'], config['frigate'].get('mqtt_port', 1883))
+    # mqtt_client.publish(DISCOVERY_TOPIC, json.dumps(sensor_config), qos=1, retain=True)
     mqtt_client.loop_forever()
 
 def load_logger():
@@ -607,8 +638,12 @@ def main():
 
     if config.get('plate_recognizer'):
         _LOGGER.info(f"Using Plate Recognizer API")
-    else:
+    if config.get('fast_alpr'):
+        _LOGGER.info(f"Using fast alpr")
+    if config.get('code_project'):
         _LOGGER.info(f"Using CodeProject.AI API")
+    else:
+        _LOGGER.info("No detector configured")
 
 
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=10)
