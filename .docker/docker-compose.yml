@@ -1,0 +1,17 @@
+version: "2.1"
+services:
+  spotd_downloader:
+    image: 192.168.1.17:5005/spotd_downloader:latest
+    container_name: spotd_downloader
+    ports:
+      - 9095:9095
+    network_mode: host
+    volumes:
+      - /mnt/:/plates/
+    environment:
+      - SECONDS_TO_WAIT=36004
+      - JELLYFIN_URL=http://192.168.1.5:8096
+      - JELLYFIN_TOKEN=02148bd5f57647eaaebc8e795fff3368
+      - FORCE_PREMIUM=0
+    restart: unless-stopped
+networks: {}
