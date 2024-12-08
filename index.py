@@ -8,13 +8,7 @@ import time
 import logging
 import uuid
 from datetime import datetime
-from multiprocessing import Process
-from tkinter.font import names
-from typing import Tuple, Any
-
-from cv2 import Mat
-from ha_mqtt_discoverable import Settings, DeviceInfo
-from ha_mqtt_discoverable.sensors import Sensor, SensorInfo
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
@@ -23,13 +17,9 @@ import yaml
 import sys
 import json
 import requests
-
-import io
-from PIL import Image, ImageDraw, ImageFont
 import difflib
-
 from fast_alpr import ALPR
-from numpy import ndarray, dtype
+
 
 mqtt_client = None
 config = None
@@ -39,7 +29,7 @@ _LOGGER = None
 executor = None
 
 VERSION = '2.1.1'
-from concurrent.futures import ThreadPoolExecutor
+
 executor = ThreadPoolExecutor(max_workers=5)
 # set local paths for development
 LOCAL = os.getenv('LOCAL', True)
@@ -51,9 +41,7 @@ SNAPSHOT_PATH = f"{'' if LOCAL else '/'}plates"
 
 DATETIME_FORMAT = "%Y-%m-%d_%H-%M"
 
-# UNIQUE_ID = "licence_plate_sensor"
-# DISCOVERY_TOPIC = f"homeassistant/sensor/{UNIQUE_ID}/config"
-# STATE_TOPIC = f"homeassistant/sensor/{UNIQUE_ID}/state"
+
 
 DEFAULT_OBJECTS = ['car', 'motorcycle', 'bus']
 CURRENT_EVENTS = {}
@@ -126,7 +114,7 @@ def fast_alpr(snapshot):
         ocr_text = result.ocr.text
         ocr_confidence = result.ocr.confidence
 
-    return ocr_text, ocr_confidence, None, None
+    return ocr_text, ocr_confidence
 
 def check_watched_plates(plate_number, response):
     config_watched_plates = config['frigate'].get('watched_plates', [])
@@ -183,54 +171,73 @@ def check_watched_plates(plate_number, response):
     return None, None, None
     
 def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score):
-    SENSOR_NAME = "License Plate Detection"
-    UNIQUE_ID = "license_plate_sensor_001"
-    DISCOVERY_TOPIC = f"homeassistant/sensor/{UNIQUE_ID}/config"
-    STATE_TOPIC = f"homeassistant/sensor/{UNIQUE_ID}/state"
-
-    mqtt_settings = Settings.MQTT(host=config['frigate']['mqtt_server'], username=config['frigate']['mqtt_username'], password=config['frigate'].get('mqtt_password', ''))
-
-    # # device_info = DeviceInfo(name="License Plate Detector", identifiers="device_id_aa")
-    # plate_number_sensor_info = SensorInfo(name="License Plate Detector", device_class="motion", unique_id="my_motion_sensor")
-    # plate_number_sensor_settings = Settings(mqtt=mqtt_settings, entity=plate_number_sensor_info)
-    # plate_number_sensor = Sensor(plate_number_sensor_settings)
-    # plate_number_sensor.set_state(str(watched_plate or plate_number).upper())
-
-    message = {
-        'plate_number': str(watched_plate or plate_number).upper(),
-        'score': plate_score,
+    MQTT_TOPIC = "homeassistant/sensor/vehicle_data"
+    vehicle_data = {
+        'detected_plate_number': str(plate_number).upper(),
+        'detected_plate_ocr_score': plate_score,
         'frigate_event_id': frigate_event_id,
         'camera_name': after_data['camera'],
-        'start_time': formatted_start_time
+        'time': datetime.now()
     }
 
     if watched_plate:
-        message.update({
+        vehicle_data.update({
             'fuzzy_score': fuzzy_score,
-            'original_plate': str(plate_number).upper()
+            'watched_plate': str(watched_plate).upper(),
+            'matched': False
         })
 
-    config_payload = {
-        "name": SENSOR_NAME,
-        "state_topic": STATE_TOPIC,
-        "json_attributes_topic": STATE_TOPIC,
-        "unit_of_measurement": None,  # No specific unit for this data
-        "device_class": None,         # No specific device class
-        "unique_id": UNIQUE_ID,
-        "availability_topic": f"homeassistant/sensor/{UNIQUE_ID}/availability",
-        "payload_available": "online",
-        "payload_not_available": "offline",
-        "device": {
-            "identifiers": [UNIQUE_ID],
-            "name": "License Plate Detection Device",
-            "model": "Custom Model",
-            "manufacturer": "My Manufacturer"
-        }
+    vehicle_data['matched'] = vehicle_data['fuzzy_score'] > 0.9
+
+    device_config = {
+        "name": "Plate Detection",
+        "identifiers": "License Plate Detection",
+        "manufacturer": "skydyne",
+        "sw_version": "1.0",
     }
 
-    mqtt_client.publish(DISCOVERY_TOPIC, json.dumps(config_payload), qos=1, retain=True)
-    mqtt_client.publish(f"homeassistant/sensor/{UNIQUE_ID}/availability", "online", qos=1, retain=True)
-    mqtt_client.publish(STATE_TOPIC, json.dumps(message), qos=1, retain=False)
+    for key, value in vehicle_data.items():
+        if key == "matched":
+            # Binary Sensor Configuration
+            discovery_topic = f"homeassistant/binary_sensor/vehicle_data/{key}/config"
+            state_topic = f"{MQTT_TOPIC}/{key}/state"
+
+            payload = {
+                "name": "matched",
+                "state_topic": state_topic,
+                "payload_on": "ON",
+                "payload_off": "OFF",
+                "device_class": "motion",  # You can change this based on your sensor type
+                "unique_id": f"vehicle_binary_sensor_{key}",
+                "device": device_config,  # Attach to the same device
+            }
+
+            # Publish configuration and state
+            mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
+            mqtt_client.publish(state_topic, "ON" if value else "OFF", retain=True)
+        else:
+            # Regular Sensor Configuration
+            discovery_topic = f"{MQTT_TOPIC}/{key}/config"
+            state_topic = f"{MQTT_TOPIC}/{key}/state"
+
+            payload = {
+                "name": f"{key.replace('_', ' ').title()}",
+                "state_topic": state_topic,
+                "unit_of_measurement": None,
+                "value_template": "{{ value }}",
+                "unique_id": f"vehicle_sensor_{key}",
+                "device": device_config,  # Attach to the same device
+            }
+
+            # Adjust unit_of_measurement for specific fields
+            if key == "ocr_score":
+                payload["unit_of_measurement"] = "%"
+            elif key == "time":
+                payload["device_class"] = "timestamp"
+
+            mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
+            mqtt_client.publish(state_topic, value, retain=True)
+
 
 def has_common_value(array1, array2):
     return any(value in array2 for value in array1)
@@ -404,20 +411,23 @@ def get_plate(snapshot):
     plate_score = None
 
     if config.get('fast_alpr'):
-        plate_number, plate_score, watched_plate, fuzzy_score = fast_alpr(snapshot)
+        plate_number, plate_score = fast_alpr(snapshot)
     else:
         _LOGGER.error("Plate Recognizer is not configured")
         return None, None, None, None
 
-    # check Plate Recognizer score
-    min_score = config['frigate'].get('min_score')
-    score_too_low = min_score and plate_score and plate_score < min_score
+    watched_plates = config['frigate'].get('watched_plates')
+    if watched_plates:
+        for watched_plate in watched_plates:
+            fuzzy_score = difflib.SequenceMatcher(None, watched_plate.lower(), plate_number.lower()).ratio()
 
-    if not fuzzy_score and score_too_low:
-        _LOGGER.info(f"Score is below minimum: {plate_score} ({plate_number})")
-        return None, None, None, None
+            min_score = config['frigate'].get('min_score')
+            if fuzzy_score < min_score:
+                _LOGGER.info(f"Score is below minimum: {fuzzy_score} for a match between {watched_plate} and ({plate_number})")
 
-    return plate_number, plate_score, watched_plate, fuzzy_score
+            return plate_number, plate_score, watched_plate, fuzzy_score
+    else:
+        return plate_number, plate_score, None, None
 
 
 def store_plate_in_db(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time):
@@ -440,6 +450,7 @@ def on_message(client, userdata, message):
 def process_message(message):
 
     global event_type
+    global matched
     payload_dict = json.loads(message.payload)
     _LOGGER.debug(f"MQTT message: {payload_dict}")
 
@@ -457,6 +468,7 @@ def process_message(message):
 
     if event_type == "new":
         print(f"Starting new thread for {event_type} for {frigate_event_id}")
+        matched = False
         thread = threading.Thread(
             target=get_snapshots,
             args=(before_data, after_data, frigate_url, frigate_event_id),
@@ -466,7 +478,8 @@ def process_message(message):
 
 def get_snapshots(before_data, after_data, frigate_url, frigate_event_id):
     global event_type
-    while event_type in ["update", "new"]:
+    global matched
+    while event_type in ["update", "new"] and not matched:
         timestamp = datetime.now()
         print(f"{timestamp} Getting snapshot {event_type} for {frigate_event_id}")
         start_time = time.time()
@@ -488,7 +501,7 @@ def get_snapshots(before_data, after_data, frigate_url, frigate_event_id):
     print(f"Done processing event {frigate_event_id}, {event_type}")
 
 def process_snapshot(before_data, after_data, frigate_url, frigate_event_id, snapshot):
-
+    global matched
     
     # if type == 'end' and after_data['id'] in CURRENT_EVENTS:
     #     _LOGGER.debug(f"CLEARING EVENT: {frigate_event_id} after {CURRENT_EVENTS[frigate_event_id]} calls to AI engine")
@@ -521,7 +534,11 @@ def process_snapshot(before_data, after_data, frigate_url, frigate_event_id, sna
     #         return
     #     CURRENT_EVENTS[frigate_event_id] += 1
 
-    plate_number, plate_score, watched_plate, fuzzy_score = get_plate(snapshot)
+    if not matched:
+        plate_number, plate_score, watched_plate, fuzzy_score = get_plate(snapshot)
+        matched = fuzzy_score > 0.9
+    else:
+        return
     if plate_number:
         start_time = datetime.fromtimestamp(after_data['start_time'])
         formatted_start_time = start_time.strftime("%Y-%m-%d %H:%M:%S")
@@ -530,7 +547,7 @@ def process_snapshot(before_data, after_data, frigate_url, frigate_event_id, sna
             store_plate_in_db(watched_plate, plate_score, frigate_event_id, after_data, formatted_start_time)
         else:
             store_plate_in_db(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time)
-        set_sublabel(frigate_url, frigate_event_id, watched_plate if watched_plate else plate_number, plate_score)
+        # set_sublabel(frigate_url, frigate_event_id, watched_plate if watched_plate else plate_number, plate_score)
 
         send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score)
          

@@ -1,17 +1,10 @@
 version: "2.1"
 services:
-  spotd_downloader:
-    image: 192.168.1.17:5005/spotd_downloader:latest
-    container_name: spotd_downloader
-    ports:
-      - 9095:9095
-    network_mode: host
+  frigate_plate_recognizer:
+    image: 192.168.2.3:5005/frigate_plate_recognizer:latest
+    container_name: frigate_plate_recognizer
     volumes:
-      - /mnt/:/plates/
-    environment:
-      - SECONDS_TO_WAIT=36004
-      - JELLYFIN_URL=http://192.168.1.5:8096
-      - JELLYFIN_TOKEN=02148bd5f57647eaaebc8e795fff3368
-      - FORCE_PREMIUM=0
+      - /docker/frigate_plate_recognizer/plates:/plates    # Mount local "plates" directory to container
+      - /docker/frigate_plate_recognizer/config:/config
     restart: unless-stopped
 networks: {}
