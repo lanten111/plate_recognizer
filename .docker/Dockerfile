@@ -1,5 +1,5 @@
 # Use an official Python runtime as the base image
-FROM python:3.7.17-alpine3.18
+FROM python:3.11-slim
 
 # Set the working directory in the container
 WORKDIR /usr/src/app

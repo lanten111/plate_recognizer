@@ -1,6 +1,5 @@
 #!/bin/python3
 import base64
-import statistics
 import threading
 import concurrent.futures
 import os
@@ -33,7 +32,7 @@ VERSION = '2.1.1'
 
 executor = ThreadPoolExecutor(max_workers=5)
 # set local paths for development
-LOCAL = os.getenv('LOCAL', True)
+LOCAL = os.getenv('LOCAL', False)
 
 CONFIG_PATH = f"{'' if LOCAL else '/'}config/config.yml"
 DB_PATH = f"{'' if LOCAL else '/'}config/frigate_plate_recogizer.db"
