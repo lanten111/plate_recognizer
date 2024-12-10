@@ -32,14 +32,14 @@ VERSION = '2.1.1'
 
 executor = ThreadPoolExecutor(max_workers=5)
 # set local paths for development
-LOCAL = os.getenv('LOCAL', False)
+LOCAL = os.getenv('LOCAL', True)
 
 CONFIG_PATH = f"{'' if LOCAL else '/'}config/config.yml"
 DB_PATH = f"{'' if LOCAL else '/'}config/frigate_plate_recogizer.db"
 LOG_FILE = f"{'' if LOCAL else '/'}config/frigate_plate_recogizer.log"
 SNAPSHOT_PATH = f"{'' if LOCAL else '/'}plates"
 
-DATETIME_FORMAT = "%Y-%m-%d_%H-%M"
+DATETIME_FORMAT = "%Y-%m-%d_%H-%M-%S"
 
 
 
@@ -170,82 +170,80 @@ def check_watched_plates(plate_number, response):
     #No watched_plate matches found 
     return None, None, None
     
-def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score, image_path):
+def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, watched_plate, watched_plates, fuzzy_score, image_path):
+    timestamp = datetime.now().strftime(DATETIME_FORMAT)
     MQTT_TOPIC = "homeassistant/sensor/vehicle_data"
     vehicle_data = {
+        'fuzzy_score': round(fuzzy_score,2),
+        'matched': False,
         'detected_plate_number': str(plate_number).upper(),
         'detected_plate_ocr_score': round(plate_score,2),
         'frigate_event_id': frigate_event_id,
+        'watched_plates': json.dumps(watched_plates),
         'camera_name': after_data['camera'],
-        'time': "",
-        "plate_image": ""
+        "plate_image": image_path,
+        'watched_plate': str(watched_plate).upper()
+
     }
 
-    if watched_plate:
-        vehicle_data.update({
-            'fuzzy_score': round(fuzzy_score,2),
-            'watched_plate': str(watched_plate).upper(),
-            'matched': False
-        })
-
     vehicle_data['matched'] = vehicle_data['fuzzy_score'] > 0.8
-    vehicle_data['time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    # def get_byte_array(image_path):
+    #     with open(image_path,'rb') as file:
+    #         file.seek(0)  # Move the pointer to the beginning of the file
+    #         content = file.read()
+    #         return bytearray(content)
+    # vehicle_data['plate_image'] = get_byte_array(image_path)
 
     def encode_image_to_base64(image_path):
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode("utf-8")
+        try:
+            with open(image_path, "rb") as image_file:
+                image_file.seek(0)
+                content = image_file.read()
+                return base64.b64encode(content)
+        except FileNotFoundError:
+            print(f"Image file {image_path} not found.")
+            return ""
     vehicle_data['plate_image'] = encode_image_to_base64(image_path)
+
     device_config = {
         "name": "Plate Detection",
         "identifiers": "License Plate Detection",
         "manufacturer": "skydyne",
-        "sw_version": "1.0",
+        "sw_version": "1.0"
     }
 
     for key, value in vehicle_data.items():
         if key == "matched":
             # Binary Sensor Configuration
-            discovery_topic = f"homeassistant/binary_sensor/vehicle_data/{key}/config"
-            state_topic = f"{MQTT_TOPIC}/{key}/state"
+            discovery_topic = f"homeassistant/sensor/vehicle_data/{key}/config"
+            state_topic = f"homeassistant/sensor/vehicle_data/{key}/state"
 
             payload = {
-                "name": "watched plate match",
+                "name": "matched",
                 "state_topic": state_topic,
                 "payload_on": "ON",
                 "payload_off": "OFF",
                 "device_class": "motion",
                 "unique_id": f"vehicle_binary_sensor_{key}",
-                "device": device_config,
+                "device": device_config
             }
-            mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
-            mqtt_client.publish(state_topic, "ON" if value else "OFF", retain=True)
-        elif key == "time":
-            discovery_topic = f"homeassistant/sensor/vehicle_data/{key}/config"
-            state_topic = f"{MQTT_TOPIC}/{key}/state"
+            print(f" {timestamp} sending mqtt on")
+            executor.submit(publish_message, discovery_topic, state_topic,payload, value )
+            # reset_binary_sensor_state_after_delay(state_topic, 20)
 
-            payload = {
-                "name": "time",
-                "state_topic": state_topic,
-                "device_class": "timestamp",
-                "unique_id": f"vehicle_sensor_{key}",
-                "device": device_config,
-            }
-            mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
-            mqtt_client.publish(state_topic, value, retain=True)
         elif key == "plate_image":
-            # Camera Configuration
             discovery_topic = f"homeassistant/camera/vehicle_data/{key}/config"
-            state_topic = f"{MQTT_TOPIC}/{key}/state"
+            state_topic = f"homeassistant/camera/vehicle_data/{key}/state"
 
             payload = {
-                "name": "image",
+                "name": "plate image",
                 "state_topic": state_topic,
-                "image": value,  # Use the URL for the camera image
                 "unique_id": f"vehicle_camera_{key}",
-                "device": device_config,  # Attach to the same device
+                "device_class": "image",
+                "device": device_config
             }
-            mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
-            mqtt_client.publish(state_topic, value, retain=True)
+            executor.submit(publish_message, discovery_topic, state_topic,payload, value )
         else:
             # Regular Sensor Configuration
             discovery_topic = f"{MQTT_TOPIC}/{key}/config"
@@ -257,14 +255,22 @@ def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, f
                 "unit_of_measurement": None,
                 "value_template": "{{ value }}",
                 "unique_id": f"vehicle_sensor_{key}",
-                "device": device_config,  # Attach to the same device
+                "device": device_config
             }
 
             # Adjust unit_of_measurement for specific fields
             if key == "ocr_score":
                 payload["unit_of_measurement"] = "%"
-            mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
-            mqtt_client.publish(state_topic, value, retain=True)
+            executor.submit(publish_message, discovery_topic, state_topic,payload, value )
+
+def publish_message(discovery_topic, state_topic, payload, value):
+    mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
+    mqtt_client.publish(state_topic, value, retain=True)
+
+def reset_binary_sensor_state_after_delay(state_topic, delay):
+    time.sleep(delay)
+    mqtt_client.publish(state_topic, "OFF", retain=True)
+    print(f"Binary sensor state set to OFF after {delay} seconds.")
 
 
 def has_common_value(array1, array2):
@@ -569,19 +575,17 @@ def process_snapshot(before_data, after_data, frigate_url, frigate_event_id, sna
     else:
         return
     if plate_number:
+        image_path = save_image(config,plate_score,snapshot,after_data,frigate_url,frigate_event_id,plate_number=plate_number)
+        send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, watched_plate,config['frigate'].get('watched_plates'),  fuzzy_score,image_path)
+
         start_time = datetime.fromtimestamp(after_data['start_time'])
         formatted_start_time = start_time.strftime("%Y-%m-%d %H:%M:%S")
-        
         if watched_plate:
             store_plate_in_db(watched_plate, plate_score, frigate_event_id, after_data, formatted_start_time)
         else:
             store_plate_in_db(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time)
-        # set_sublabel(frigate_url, frigate_event_id, watched_plate if watched_plate else plate_number, plate_score)
 
-        if  config['frigate'].get('save_snapshots', False):
-            image_path = save_image(config,plate_score,snapshot,after_data,frigate_url,frigate_event_id,plate_number=plate_number)
 
-        send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, formatted_start_time, watched_plate, fuzzy_score,image_path)
          
 
 
