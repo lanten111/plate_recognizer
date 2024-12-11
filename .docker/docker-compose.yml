@@ -2,7 +2,7 @@ version: "2.1"
 services:
   plate_recognizer:
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile
     container_name: plate_recognizer
     volumes:
