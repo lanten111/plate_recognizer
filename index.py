@@ -172,7 +172,6 @@ def check_watched_plates(plate_number, response):
     
 def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, watched_plate, watched_plates, fuzzy_score, image_path):
     timestamp = datetime.now().strftime(DATETIME_FORMAT)
-    MQTT_TOPIC = "homeassistant/sensor/vehicle_data"
     vehicle_data = {
         'fuzzy_score': round(fuzzy_score,2),
         'matched': False,
@@ -188,22 +187,9 @@ def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, w
 
     vehicle_data['matched'] = vehicle_data['fuzzy_score'] > 0.8
 
-    # def get_byte_array(image_path):
-    #     with open(image_path,'rb') as file:
-    #         file.seek(0)  # Move the pointer to the beginning of the file
-    #         content = file.read()
-    #         return bytearray(content)
-    # vehicle_data['plate_image'] = get_byte_array(image_path)
-
     def encode_image_to_base64(image_path):
-        try:
-            with open(image_path, "rb") as image_file:
-                image_file.seek(0)
-                content = image_file.read()
-                return base64.b64encode(content)
-        except FileNotFoundError:
-            print(f"Image file {image_path} not found.")
-            return ""
+        with open(image_path, "rb") as image_file:
+            return base64.b64encode(image_file.read()).decode("utf-8")
     vehicle_data['plate_image'] = encode_image_to_base64(image_path)
 
     device_config = {
@@ -216,21 +202,22 @@ def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, w
     for key, value in vehicle_data.items():
         if key == "matched":
             # Binary Sensor Configuration
-            discovery_topic = f"homeassistant/sensor/vehicle_data/{key}/config"
-            state_topic = f"homeassistant/sensor/vehicle_data/{key}/state"
+            discovery_topic = f"homeassistant/binary_sensor/vehicle_data/{key}/config"
+            state_topic = f"homeassistant/binary_sensor/vehicle_data/{key}/state"
 
             payload = {
                 "name": "matched",
                 "state_topic": state_topic,
-                "payload_on": "ON",
-                "payload_off": "OFF",
+                "payload_on": "True",
+                "payload_off": "False",
                 "device_class": "motion",
                 "unique_id": f"vehicle_binary_sensor_{key}",
                 "device": device_config
             }
             print(f" {timestamp} sending mqtt on")
-            executor.submit(publish_message, discovery_topic, state_topic,payload, value )
-            # reset_binary_sensor_state_after_delay(state_topic, 20)
+            executor.submit(publish_message, discovery_topic, state_topic, payload, value )
+            executor.submit(reset_binary_sensor_state_after_delay,state_topic, 5, value)
+
 
         elif key == "plate_image":
             discovery_topic = f"homeassistant/camera/vehicle_data/{key}/config"
@@ -240,14 +227,12 @@ def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, w
                 "name": "plate image",
                 "state_topic": state_topic,
                 "unique_id": f"vehicle_camera_{key}",
-                "device_class": "image",
                 "device": device_config
             }
-            executor.submit(publish_message, discovery_topic, state_topic,payload, value )
+            executor.submit(publish_message, discovery_topic, state_topic, payload, value )
         else:
-            # Regular Sensor Configuration
-            discovery_topic = f"{MQTT_TOPIC}/{key}/config"
-            state_topic = f"{MQTT_TOPIC}/{key}/state"
+            discovery_topic = f"homeassistant/sensor/vehicle_data/{key}/config"
+            state_topic = f"homeassistant/sensor/vehicle_data/{key}/state"
 
             payload = {
                 "name": f"{key.replace('_', ' ').title()}",
@@ -267,9 +252,9 @@ def publish_message(discovery_topic, state_topic, payload, value):
     mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
     mqtt_client.publish(state_topic, value, retain=True)
 
-def reset_binary_sensor_state_after_delay(state_topic, delay):
+def reset_binary_sensor_state_after_delay(state_topic, delay, value):
     time.sleep(delay)
-    mqtt_client.publish(state_topic, "OFF", retain=True)
+    mqtt_client.publish(state_topic, not value, retain=True)
     print(f"Binary sensor state set to OFF after {delay} seconds.")
 
 
