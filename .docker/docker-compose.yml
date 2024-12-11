@@ -3,7 +3,7 @@ services:
   plate_recognizer:
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: .docker/Dockerfile
     container_name: plate_recognizer
     volumes:
       - /docker/frigate_plate_recognizer/plates:/plates
