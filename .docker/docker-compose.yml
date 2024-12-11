@@ -6,7 +6,7 @@ services:
       dockerfile: .docker/Dockerfile
     container_name: plate_recognizer
     volumes:
-      - /docker/frigate_plate_recognizer/plates:/plates
-      - /docker/frigate_plate_recognizer/config:/config
+      - /docker/plate_recognizer/plates:/plates
+      - /docker/plate_recognizer/config:/config
     restart: unless-stopped
 networks: {}
