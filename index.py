@@ -216,7 +216,7 @@ def send_mqtt_message(plate_number, plate_score, frigate_event_id, after_data, w
             }
             print(f" {timestamp} sending mqtt on")
             executor.submit(publish_message, discovery_topic, state_topic, payload, value )
-            executor.submit(reset_binary_sensor_state_after_delay,state_topic, 5, value)
+            executor.submit(reset_binary_sensor_state_after_delay,state_topic, 20, value)
 
 
         elif key == "plate_image":

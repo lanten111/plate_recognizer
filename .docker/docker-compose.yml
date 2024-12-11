@@ -1,10 +1,12 @@
 version: "2.1"
 services:
-  frigate_plate_recognizer:
-    image: 192.168.2.3:5005/frigate_plate_recognizer:latest
-    container_name: frigate_plate_recognizer
+  plate_recognizer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: plate_recognizer
     volumes:
-      - /docker/frigate_plate_recognizer/plates:/plates    # Mount local "plates" directory to container
+      - /docker/frigate_plate_recognizer/plates:/plates
       - /docker/frigate_plate_recognizer/config:/config
     restart: unless-stopped
 networks: {}
