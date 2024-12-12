@@ -30,7 +30,7 @@ executor = None
 
 VERSION = '2.1.1'
 
-executor = ThreadPoolExecutor(max_workers=5)
+executor = ThreadPoolExecutor(max_workers=20)
 # set local paths for development
 LOCAL = os.getenv('LOCAL', False)
 
