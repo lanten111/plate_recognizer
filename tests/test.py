@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock, mock_open
 from PIL import Image, ImageDraw
 import yaml
 
-import index
+import main
 
 class BaseTestCase(unittest.TestCase):
     def setUp(self):

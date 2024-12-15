@@ -12,6 +12,8 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+ENV LOCAL=false
+
 COPY index.py .
 
 RUN mkdir -p /plates /config
