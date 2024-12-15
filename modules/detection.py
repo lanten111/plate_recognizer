@@ -8,8 +8,7 @@ from datetime import datetime
 import cv2
 import numpy as np
 import requests
-from numpy.matlib import empty
-from paho import mqtt
+import paho.mqtt.client as mqtt
 
 from modules.alpr import get_alpr, fast_alpr
 from modules.config import Config
@@ -23,18 +22,18 @@ def process_plate_detection(config:Config, camera_name, frigate_event_id, logger
     snapshot = get_latest_snapshot(config, frigate_event_id, camera_name, logger)
 
     if not is_plate_found_for_event(config, frigate_event_id, logger):
-        detected_plate_number, detected_plate_score = get_plate(config, snapshot, logger)
-        watched_plate, fuzzy_score, owner, car_brand, watched_plate_numbers = check_watched_plates(config, detected_plate_number, logger)
+        detected_plate, detected_plate_score = get_plate(config, snapshot, logger)
+        watched_plate, fuzzy_score, watched_plates = check_watched_plates(config, detected_plate, logger)
 
         if watched_plate is not None and fuzzy_score is not None:
-            print(f"{datetime.now()} storing plate({detected_plate_number}) in db")
-            store_plate_in_db(config, None, detected_plate_number, round(fuzzy_score, 2), frigate_event_id, camera_name, watched_plate, True, logger)
-            print(f"{datetime.now()} saving  plate({detected_plate_number}) image")
-            image_path = save_image(config, detected_plate_score, snapshot, camera_name, detected_plate_number, logger)
-            print(f"{datetime.now()} sending mqtt message for  plate({detected_plate_number})")
-            send_mqtt_message(config, detected_plate_number, detected_plate_score, frigate_event_id, camera_name, watched_plate, watched_plate_numbers, owner, car_brand, fuzzy_score, image_path, logger)
+            print(f"{datetime.now()} storing plate({detected_plate}) in db")
+            store_plate_in_db(config, None, detected_plate, round(fuzzy_score, 2), frigate_event_id, camera_name, watched_plate, True, logger)
+            print(f"{datetime.now()} saving  plate({detected_plate}) image")
+            image_path = save_image(config, detected_plate_score, snapshot, camera_name, detected_plate, logger)
+            print(f"{datetime.now()} sending mqtt message for  plate({detected_plate})")
+            send_mqtt_message(config , detected_plate_score, frigate_event_id, camera_name, detected_plate, watched_plate, watched_plates, fuzzy_score, image_path, logger)
             config.executor.submit(delete_old_files, config, logger)
-            print(f"plate({detected_plate_number}) match found in watched plates ({watched_plate}) for event {frigate_event_id}, {event_type} stops")
+            print(f"plate({detected_plate}) match found in watched plates ({watched_plate}) for event {frigate_event_id}, {event_type} stops")
     else:
         print(f"plate already found for event {frigate_event_id}, {event_type} skipping........")
 
@@ -64,11 +63,11 @@ def store_plate_in_db(config:Config, detection_time, detected_plate_number, fuzz
     if results:
         set_clause = 'detection_time = ?, fuzzy_score = ?, detected_plate_number = ? , camera_name = ?, watched_plate = ?, plate_found = ?'
         where = 'frigate_event_id = ?'
-        params = (detection_time, fuzzy_score, detected_plate_number, camera_name, watched_plate, plate_found,  frigate_event_id)
+        params = (detection_time, fuzzy_score, detected_plate_number, camera_name, watched_plate.number, plate_found,  frigate_event_id)
         update_table(config.db_path, config.table, set_clause, where, params)
     else:
         columns = ('detection_time', 'fuzzy_score', 'detected_plate_number', 'frigate_event_id', 'camera_name','watched_plate', 'plate_found')
-        values = (detection_time, fuzzy_score, detected_plate_number, frigate_event_id, camera_name, watched_plate,plate_found )
+        values = (detection_time, fuzzy_score, detected_plate_number, frigate_event_id, camera_name, watched_plate.number,plate_found )
         insert_into_table(config.db_path, config.table, columns, values)
 
 
@@ -92,13 +91,13 @@ def get_vehicle_direction(config:Config,  after_data, frigate_event_id, logger):
     else:
         print(f"event  {frigate_event_id} does not contain zone, skipping direction detection")
 
-def send_mqtt_message(config, detected_plate_number, plate_score, frigate_event_id, camera_name, watched_plate, watched_plates, owner , car_brand, fuzzy_score, image_path, logger):
+def send_mqtt_message(config, plate_score, frigate_event_id, camera_name, detected_plate, watched_plate, watched_plates, fuzzy_score, image_path, logger):
     timestamp = datetime.now().strftime(config.date_format)
 
     vehicle_data = {
         'fuzzy_score': round(fuzzy_score,2),
         'matched': False,
-        'detected_plate_number': str(detected_plate_number).upper(),
+        'detected_plate_number': str(detected_plate).upper(),
         'detected_plate_ocr_score': round(plate_score,2),
         'frigate_event_id': frigate_event_id,
         'watched_plates': json.dumps(watched_plates),
@@ -106,8 +105,8 @@ def send_mqtt_message(config, detected_plate_number, plate_score, frigate_event_
         "plate_image": image_path,
         'watched_plate': str(watched_plate).upper(),
         'vehicle_direction': "",
-        "vehicle_owner": owner,
-        "vehicle_brand": car_brand
+        "vehicle_owner": watched_plate.owner,
+        "vehicle_brand": watched_plate.car_brand
 
     }
 
@@ -144,7 +143,7 @@ def send_mqtt_message(config, detected_plate_number, plate_score, frigate_event_
             }
             print(f" {timestamp} sending mqtt on")
             config.executor.submit(publish_message, discovery_topic, state_topic, payload, value )
-            config.executor.submit(reset_binary_sensor_state_after_delay,state_topic, config.get('frigate').get('watched_binary_sensor_reset_in_sec'), value)
+            config.executor.submit(reset_binary_sensor_state_after_delay,config, state_topic, config.watched_binary_sensor_reset_in_sec, value)
 
 
         elif key == "plate_image":
@@ -157,7 +156,7 @@ def send_mqtt_message(config, detected_plate_number, plate_score, frigate_event_
                 "unique_id": f"vehicle_camera_{key}",
                 "device": device_config
             }
-            config.executor.submit(publish_message, discovery_topic, state_topic, payload, value )
+            config.executor.submit(publish_message, config, discovery_topic, state_topic, payload, value )
         else:
             discovery_topic = f"homeassistant/sensor/vehicle_data/{key}/config"
             state_topic = f"homeassistant/sensor/vehicle_data/{key}/state"
@@ -176,55 +175,42 @@ def send_mqtt_message(config, detected_plate_number, plate_score, frigate_event_
                 payload["unit_of_measurement"] = "%"
             config.executor.submit(publish_message, discovery_topic, state_topic,payload, value )
 
-def publish_message(discovery_topic, state_topic, payload, value):
-    mqtt_client = get_mqtt_client()
+def publish_message(config, discovery_topic, state_topic, payload, value):
+    mqtt_client = get_mqtt_client(config)
     mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
     mqtt_client.publish(state_topic, value, retain=True)
 
-def reset_binary_sensor_state_after_delay(state_topic, delay, value):
-    mqtt_client = get_mqtt_client()
+def reset_binary_sensor_state_after_delay(config, state_topic, delay, value):
+    mqtt_client = get_mqtt_client(config)
     time.sleep(delay)
     mqtt_client.publish(state_topic, not value, retain=True)
     print(f"Binary sensor state set to OFF after {delay} seconds.")
 
-def check_watched_plates(config:Config, detected_plate_number, logger):
+def check_watched_plates(config:Config, detected_plate, logger):
     config_watched_plates = config.watched_plates
     if not config_watched_plates:
         logger.debug("Skipping checking Watched Plates because watched_plates is not set")
         return None, None, None
 
-    matching_plate = str(detected_plate_number).lower() in config_watched_plates
-    if matching_plate:
-        logger.info(f"Recognised plate is a Watched Plate: {detected_plate_number}")
+    if not detected_plate:
+        logger.debug("Skipping checking Watched Plates because no plate detected")
         return None, None, None
 
-    fuzzy_match = config['frigate'].get('fuzzy_match', 0)
-
-    if fuzzy_match == 0:
+    if config.fuzzy_match == 0:
         logger.debug(f"Skipping fuzzy matching because fuzzy_match value not set in config")
         return None, None, None
 
     best_match, max_score = None, 0
-    owner, car_brand = None, None
-    for watched_plate in watched_plate_numbers:
-        seq = difflib.SequenceMatcher(a=str(detected_plate_number).lower(), b=str(watched_plate).lower())
+    for watched_plate in config_watched_plates:
+        seq = difflib.SequenceMatcher(a=str(detected_plate).lower(), b=str(watched_plate.number).lower())
         if seq.ratio() > max_score:
             max_score = seq.ratio()
             best_match = watched_plate
 
     logger.debug(f"Best fuzzy_match: {best_match} ({max_score})")
 
-    if max_score >= fuzzy_match:
-        logger.info(f"Watched plate found from fuzzy matching: {best_match} with score {max_score}")
-        for plate in config_watched_plates:
-            if plate['number'].lower() == best_match:
-                owner = plate['owner']
-                car_brand = plate['car_brand']
-                break
-        return best_match, max_score, owner, car_brand, watched_plate_numbers
+    return best_match, max_score, config_watched_plates
 
-
-    return None, None
 
 def save_image(config:Config, plate_score, snapshot, camera_name, plate_number, logger):
 
@@ -277,9 +263,11 @@ def get_db_event_direction(config, frigate_event_id, logger):
     results = select_from_table(config.db_path , config.table, columns,  where, params )
     return results
 
-def get_mqtt_client() -> mqtt:
+def get_mqtt_client(config) -> mqtt:
     mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     mqtt_client.enable_logger()
+    mqtt_client.username_pw_set(config.mqtt_username, config.mqtt_password)
+    mqtt_client.connect(config.mqtt_server, config.mqtt_port)
     return  mqtt_client
 
 def delete_old_files(config, logger):

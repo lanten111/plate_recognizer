@@ -23,11 +23,11 @@ class FastAlprConfig:
 @dataclass
 class Config:
     watched_plates: List[WatchedPlate] = field(default_factory=list)
-    fuzzy_match: Optional[float] = None
-    save_snapshots: Optional[bool] = None
+    fuzzy_match: Optional[float] = 0
+    save_snapshots: Optional[bool] = False
     frigate_url: Optional[str] = None
     mqtt_server: Optional[str] = None
-    mqtt_port: Optional[int] = None
+    mqtt_port: Optional[int] = 1883
     mqtt_username: Optional[str] = None
     mqtt_password: Optional[str] = None
     db_path: Optional[str] = None
@@ -42,7 +42,7 @@ class Config:
     return_topic: Optional[str] = None
     discovery_topic: Optional[str] = None
     days_to_keep_images_in_days: Optional[int] = None
-    watched_binary_sensor_reset_in_sec: Optional[int] = None
+    watched_binary_sensor_reset_in_sec: Optional[int] = 20
     camera: Dict[str, CameraConfig] = field(default_factory=dict)
     objects: List[str] = field(default_factory=list)
     min_score: Optional[float] = None
