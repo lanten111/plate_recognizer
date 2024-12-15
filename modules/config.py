@@ -16,7 +16,12 @@ class CameraConfig:
     zones: List[str] = field(default_factory=list)
 
 @dataclass
-class PlateRecogniserConfig:
+class FastAlprConfig:
+    plate_detector_model: Optional[str] = None
+    ocr_model: Optional[str] = None
+
+@dataclass
+class Config:
     watched_plates: List[WatchedPlate] = field(default_factory=list)
     fuzzy_match: Optional[float] = None
     save_snapshots: Optional[bool] = None
@@ -28,8 +33,11 @@ class PlateRecogniserConfig:
     db_path: Optional[str] = None
     log_file_path: Optional[str] = None
     snapshot_path: Optional[str] = None
+    date_format: Optional[str] = None
     config_dir: Optional[str] = None
+    table: Optional[str] = None
     executor: Optional[any] = None
+    default_objects: List = None
     main_topic: Optional[str] = None
     return_topic: Optional[str] = None
     discovery_topic: Optional[str] = None
@@ -38,55 +46,43 @@ class PlateRecogniserConfig:
     camera: Dict[str, CameraConfig] = field(default_factory=dict)
     objects: List[str] = field(default_factory=list)
     min_score: Optional[float] = None
-
-@dataclass
-class FastAlprConfig:
-    plate_detector_model: Optional[str] = None
-    ocr_model: Optional[str] = None
-
-@dataclass
-class Config:
-    plate_recogniser: PlateRecogniserConfig = field(default_factory=PlateRecogniserConfig)
     fast_alpr: FastAlprConfig = field(default_factory=FastAlprConfig)
     logger_level: Optional[str] = None
 
-def get_Config() -> Config:
+def get_yaml_config() -> Config:
     LOCAL = os.getenv('LOCAL', 'True').lower() == 'true'
-    if LOCAL:
-        config_dir =  "config"  # Default to a local directory if not provided
-    else:
-        config_dir = "/config"  # Default to a production directory if not LOCAL
+    config_dir = "config" if LOCAL else "/config"
 
-    data = yaml.safe_load(config_dir + "/" + "config.yml")
+    # Load YAML content
+    config_path = os.path.join(config_dir, "config.yml")
+    with open(config_path, 'r') as file:
+        data = yaml.safe_load(file) or {}
 
-    # Convert watched plates to WatchedPlate objects
+    # Helper to resolve paths
+    def resolve_path(path: str) -> str:
+        if path and not path.startswith("/"):
+            return os.path.join(config_dir, path)
+        return path
+
+    # Process fields with defaults
     watched_plates = [
-        WatchedPlate(
-            number=plate.get('number'),
-            owner=plate.get('owner'),
-            car_brand=plate.get('car_brand')
-        ) for plate in data.get('plate_recogniser', {}).get('watched_plates', [])
+        WatchedPlate(**plate)
+        for plate in data.get('plate_recogniser', {}).get('watched_plates', [])
     ]
-
-    # Convert camera zones to CameraConfig objects
     camera = {
         name: CameraConfig(zones=cfg.get('zones', []))
         for name, cfg in data.get('plate_recogniser', {}).get('camera', {}).items()
     }
-
-
-    # Function to resolve and prepend config_dir if necessary
-    def resolve_path(path: str) -> str:
-        if path and not path.startswith("/"):  # If path is a relative path (filename)
-            return os.path.join(config_dir, path)  # Prepend config_dir to the filename
-        return path  # Return the path if it's already absolute
-
     db_path = resolve_path(data.get('plate_recogniser', {}).get('db_path', 'plate_recogniser.db'))
     log_file_path = resolve_path(data.get('plate_recogniser', {}).get('log_file_path', 'late_recogniser.log'))
     snapshot_path = resolve_path(data.get('plate_recogniser', {}).get('snapshot_path', 'snapshots'))
     executor = ThreadPoolExecutor(max_workers=20)
-    # Construct PlateRecogniserConfig
-    plate_recogniser = PlateRecogniserConfig(
+    date_format = "%Y-%m-%d_%H-%M-%S"
+    default_objects = ['car', 'motorcycle', 'bus']
+    table = "plates"
+
+    # Construct and return Config object
+    return Config(
         watched_plates=watched_plates,
         fuzzy_match=data.get('plate_recogniser', {}).get('fuzzy_match'),
         save_snapshots=data.get('plate_recogniser', {}).get('save_snapshots'),
@@ -96,6 +92,9 @@ def get_Config() -> Config:
         log_file_path=log_file_path,
         snapshot_path=snapshot_path,
         executor=executor,
+        date_format=date_format,
+        default_objects=default_objects,
+        table=table,
         mqtt_server=data.get('plate_recogniser', {}).get('mqtt_server'),
         mqtt_port=data.get('plate_recogniser', {}).get('mqtt_port'),
         mqtt_username=data.get('plate_recogniser', {}).get('mqtt_username'),
@@ -107,18 +106,10 @@ def get_Config() -> Config:
         watched_binary_sensor_reset_in_sec=data.get('plate_recogniser', {}).get('watched_binary_sensor_reset_in_sec'),
         camera=camera,
         objects=data.get('plate_recogniser', {}).get('objects', []),
-        min_score=data.get('plate_recogniser', {}).get('min_score')
-    )
-
-    # Construct FastAlprConfig
-    fast_alpr = FastAlprConfig(
-        plate_detector_model=data.get('fast_alpr', {}).get('plate_detector_model'),
-        ocr_model=data.get('fast_alpr', {}).get('ocr_model')
-    )
-
-    # Construct the final Config object
-    return Config(
-        plate_recogniser=plate_recogniser,
-        fast_alpr=fast_alpr,
-        logger_level=data.get('logger_level')
+        min_score=data.get('plate_recogniser', {}).get('min_score'),
+        fast_alpr=FastAlprConfig(
+            plate_detector_model=data.get('plate_recogniser', {}).get('fast_alpr', {}).get('plate_detector_model'),
+            ocr_model=data.get('plate_recogniser', {}).get('fast_alpr', {}).get('ocr_model')
+        ),
+        logger_level=data.get('plate_recogniser', {}).get('logger_level')
     )

@@ -2,7 +2,7 @@ import sqlite3
 
 
 def setup_db(config):
-    conn = sqlite3.connect(config.plate_recogniser.db_path)
+    conn = sqlite3.connect(config.db_path)
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS plates (
@@ -118,46 +118,46 @@ def delete_from_table(db_file, table, where, params):
 
 
 
-def get_db_event_direction(frigate_event_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""SELECT vehicle_direction FROM plates WHERE frigate_event_id = ?""", (frigate_event_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return row
+# def get_db_event_direction(frigate_event_id):
+#     conn = sqlite3.connect(DB_PATH)
+#     cursor = conn.cursor()
+#     cursor.execute("""SELECT vehicle_direction FROM plates WHERE frigate_event_id = ?""", (frigate_event_id,))
+#     row = cursor.fetchone()
+#     conn.close()
+#     return row
 
 
-def store_plate_in_db(detection_time, detected_plate_number, fuzzy_score, frigate_event_id, camera_name, watched_plate, plate_found ):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-
-        _LOGGER.info(f"Storing plate number in database: {detected_plate_number} with score: {fuzzy_score}")
-
-        cursor.execute("""SELECT id FROM plates WHERE frigate_event_id = ?""", (frigate_event_id,))
-        event_id = cursor.fetchone()
-
-        if event_id:
-            cursor.execute("""
-                UPDATE plates
-                SET detection_time = ?, 
-                    fuzzy_score = ?, 
-                    detected_plate_number = ?, 
-                    frigate_event_id = ?, 
-                    camera_name = ?, 
-                    watched_plate = ?, 
-                    plate_found = ?
-                WHERE id = ?
-            """, (detection_time, fuzzy_score, detected_plate_number, frigate_event_id, camera_name, watched_plate, plate_found, event_id[0]))
-
-        else:
-            cursor.execute("""INSERT INTO plates (detection_time, fuzzy_score , detected_plate_number, frigate_event_id , camera_name, watched_plate, plate_found  ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                           (detection_time, fuzzy_score, detected_plate_number, frigate_event_id, camera_name,watched_plate, plate_found))
-        conn.commit()
-    except sqlite3.Error as e:
-        _LOGGER.error(f"Database error: {e}")
-    finally:
-        conn.close()
+# def store_plate_in_db(detection_time, detected_plate_number, fuzzy_score, frigate_event_id, camera_name, watched_plate, plate_found ):
+#     try:
+#         conn = sqlite3.connect(DB_PATH)
+#         cursor = conn.cursor()
+#
+#         _LOGGER.info(f"Storing plate number in database: {detected_plate_number} with score: {fuzzy_score}")
+#
+#         cursor.execute("""SELECT id FROM plates WHERE frigate_event_id = ?""", (frigate_event_id,))
+#         event_id = cursor.fetchone()
+#
+#         if event_id:
+#             cursor.execute("""
+#                 UPDATE plates
+#                 SET detection_time = ?,
+#                     fuzzy_score = ?,
+#                     detected_plate_number = ?,
+#                     frigate_event_id = ?,
+#                     camera_name = ?,
+#                     watched_plate = ?,
+#                     plate_found = ?
+#                 WHERE id = ?
+#             """, (detection_time, fuzzy_score, detected_plate_number, frigate_event_id, camera_name, watched_plate, plate_found, event_id[0]))
+#
+#         else:
+#             cursor.execute("""INSERT INTO plates (detection_time, fuzzy_score , detected_plate_number, frigate_event_id , camera_name, watched_plate, plate_found  ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+#                            (detection_time, fuzzy_score, detected_plate_number, frigate_event_id, camera_name,watched_plate, plate_found))
+#         conn.commit()
+#     except sqlite3.Error as e:
+#         _LOGGER.error(f"Database error: {e}")
+#     finally:
+#         conn.close()
 
 
 
@@ -171,18 +171,18 @@ def store_plate_in_db(detection_time, detected_plate_number, fuzzy_score, frigat
 
 
 
-def store_vehicle_direction_in_db(vehicle_direction, frigate_event_id):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        _LOGGER.info(f"Storing vehicle direction number in database: {vehicle_direction} for event: {frigate_event_id}")
-        cursor.execute("""INSERT INTO plates (vehicle_direction, frigate_event_id) VALUES (?, ?)""",
-                       (vehicle_direction, frigate_event_id))
-        conn.commit()
-    except sqlite3.Error as e:
-        _LOGGER.error(f"Database error: {e}")
-    finally:
-        conn.close()
+# def store_vehicle_direction_in_db(vehicle_direction, frigate_event_id):
+#     try:
+#         conn = sqlite3.connect(DB_PATH)
+#         cursor = conn.cursor()
+#         _LOGGER.info(f"Storing vehicle direction number in database: {vehicle_direction} for event: {frigate_event_id}")
+#         cursor.execute("""INSERT INTO plates (vehicle_direction, frigate_event_id) VALUES (?, ?)""",
+#                        (vehicle_direction, frigate_event_id))
+#         conn.commit()
+#     except sqlite3.Error as e:
+#         _LOGGER.error(f"Database error: {e}")
+#     finally:
+#         conn.close()
 
 # def is_duplicate_event(frigate_event_id):
 #     # see if we have already processed this event
