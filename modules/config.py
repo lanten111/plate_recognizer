@@ -13,7 +13,10 @@ class WatchedPlate:
 
 @dataclass
 class CameraConfig:
-    zones: List[str] = field(default_factory=list)
+    first_zone: Optional[str] = None
+    last_zone: Optional[str] = None
+    trigger_zones: List[str] = field(default_factory=list)
+
 
 @dataclass
 class FastAlprConfig:
@@ -33,6 +36,7 @@ class Config:
     db_path: Optional[str] = None
     log_file_path: Optional[str] = None
     snapshot_path: Optional[str] = None
+    debug_snapshot_path: Optional[str] = None
     date_format: Optional[str] = None
     config_dir: Optional[str] = None
     table: Optional[str] = None
@@ -43,7 +47,7 @@ class Config:
     return_topic: Optional[str] = None
     discovery_topic: Optional[str] = None
     days_to_keep_images_in_days: Optional[int] = None
-    watched_binary_sensor_reset_in_sec: Optional[int] = 20
+    watched_binary_sensor_reset_in_sec: Optional[int] = 50
     camera: Dict[str, CameraConfig] = field(default_factory=dict)
     objects: List[str] = field(default_factory=list)
     min_score: Optional[float] = None
@@ -67,16 +71,27 @@ def get_yaml_config() -> Config:
 
     # Process fields with defaults
     watched_plates = [
-        WatchedPlate(**plate)
-        for plate in data.get('plate_recogniser', {}).get('watched_plates', [])
+        WatchedPlate(
+            number=plate.get('number'),
+            owner=plate.get('owner'),
+            car_brand=plate.get('car_brand')
+        ) for plate in data.get('plate_recogniser', {}).get('watched_plates', [])
     ]
+
     camera = {
-        name: CameraConfig(zones=cfg.get('zones', []))
-        for name, cfg in data.get('plate_recogniser', {}).get('camera', {}).items()
+        name: CameraConfig(
+            first_zone=cfg.get('first_zone'),
+            last_zone=cfg.get('last_zone'),
+            trigger_zones=cfg.get('trigger_zones', [])
+        ) for name, cfg in data.get('plate_recogniser', {}).get('camera', {}).items()
     }
+
+
     db_path = resolve_path(data.get('plate_recogniser', {}).get('db_path', 'plate_recogniser.db'))
     log_file_path = resolve_path(data.get('plate_recogniser', {}).get('log_file_path', 'late_recogniser.log'))
+    debug_snapshot_path = resolve_path(data.get('plate_recogniser', {}).get('debug_snapshot_path', 'debug_snapshot'))
     snapshot_path = resolve_path(data.get('plate_recogniser', {}).get('snapshot_path', 'snapshots'))
+
     executor = ThreadPoolExecutor(max_workers=20)
     date_format = "%Y-%m-%d_%H-%M-%S"
     default_objects = ['car', 'motorcycle', 'bus']
@@ -96,6 +111,7 @@ def get_yaml_config() -> Config:
         date_format=date_format,
         default_objects=default_objects,
         table=table,
+        debug_snapshot_path=debug_snapshot_path,
         mqtt_server=data.get('plate_recogniser', {}).get('mqtt_server'),
         manufacturer=data.get('plate_recogniser', {}).get('manufacturer'),
         mqtt_port=data.get('plate_recogniser', {}).get('mqtt_port'),

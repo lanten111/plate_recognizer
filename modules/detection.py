@@ -3,13 +3,13 @@ import difflib
 import json
 import os
 import time
+import uuid
 from dataclasses import asdict
 from datetime import datetime
 
 import cv2
 import numpy as np
 import requests
-import paho.mqtt.client as mqtt
 
 from modules.alpr import get_alpr, fast_alpr
 from modules.config import Config
@@ -20,6 +20,7 @@ event_type = None
 def process_plate_detection(config:Config, camera_name, frigate_event_id, mqtt_client, logger):
     logger.info(f"start processing event {frigate_event_id}")
     snapshot = get_latest_snapshot(config, frigate_event_id, camera_name, logger)
+    # config.executor(save_image, config, config.debug_snapshot_path,  None, snapshot, camera_name, None, frigate_event_id, logger)
 
     if not is_plate_found_for_event(config, frigate_event_id, logger):
         detected_plate, detected_plate_score = get_plate(config, snapshot, logger)
@@ -27,10 +28,11 @@ def process_plate_detection(config:Config, camera_name, frigate_event_id, mqtt_c
 
         if watched_plate is not None and fuzzy_score is not None:
             store_plate_in_db(config, None, detected_plate, round(fuzzy_score, 2), frigate_event_id, camera_name, watched_plate, True, logger)
-            image_path = save_image(config, detected_plate_score, snapshot, camera_name, detected_plate, logger)
+            image_path = save_image(config, config.snapshot_path,  detected_plate_score, snapshot, camera_name, detected_plate, frigate_event_id, logger)
             send_mqtt_message(config , detected_plate_score, frigate_event_id, camera_name, detected_plate,
                               watched_plate, watched_plates, fuzzy_score, image_path, mqtt_client, logger)
-            config.executor.submit(delete_old_files, config, logger)
+            config.executor.submit(delete_old_files, config.days_to_keep_images_in_days, config.debug_snapshot_path, logger)
+            config.executor.submit(delete_old_files, config.days_to_keep_images_in_days, config.snapshot_path, logger)
             logger.info(f"plate({detected_plate}) match found in watched plates ({watched_plate}) for event {frigate_event_id}, {event_type} stops")
     else:
         logger.info(f"plate already found for event {frigate_event_id}, {event_type} skipping........")
@@ -72,11 +74,12 @@ def get_vehicle_direction(config:Config,  after_data, frigate_event_id, logger):
             cameras = config.camera
             for camera in cameras:
                 if camera == after_data['camera']:
-                    zones = cameras.get(camera).zones
-                    if current_zone == zones[0]:
+                    if current_zone.lower() == config.camera.get(camera).first_zone:
                         values = (frigate_event_id, 'entering')
-                    else:
+                    elif current_zone.lower() == config.camera.get(camera).last_zone:
                         values = (frigate_event_id, 'exiting')
+                    else:
+                        values = (frigate_event_id, 'unknown')
                     columns = ('frigate_event_id', 'vehicle_direction')
                     insert_into_table(config.db_path, config.table, columns, values, logger)
         else:
@@ -142,8 +145,8 @@ def send_mqtt_message(config, plate_score, frigate_event_id, camera_name, detect
                 "unique_id": f"vehicle_binary_sensor_{key}",
                 "device": device_config
             }
-            print(f" {timestamp} sending mqtt on")
-            config.executor.submit(publish_message, discovery_topic, state_topic, payload, value, mqtt_client, logger)
+            logger.info(f"sending mqtt on")
+            config.executor.submit(publish_message,config, discovery_topic, state_topic, payload, value, mqtt_client, logger)
             config.executor.submit(reset_binary_sensor_state_after_delay,config, state_topic, config.watched_binary_sensor_reset_in_sec, value, mqtt_client, logger)
 
 
@@ -174,7 +177,7 @@ def send_mqtt_message(config, plate_score, frigate_event_id, camera_name, detect
             # Adjust unit_of_measurement for specific fields
             if key == "ocr_score":
                 payload["unit_of_measurement"] = "%"
-            config.executor.submit(publish_message, discovery_topic, state_topic,payload, value, mqtt_client, logger )
+            config.executor.submit(publish_message,config, discovery_topic, state_topic,payload, value, mqtt_client, logger )
 
 def publish_message(config, discovery_topic, state_topic, payload, value, mqtt_client, logger):
     mqtt_client.publish(discovery_topic, json.dumps(payload), retain=True)
@@ -212,13 +215,15 @@ def check_watched_plates(config:Config, detected_plate, logger):
     return best_match, max_score, config_watched_plates
 
 
-def save_image(config:Config, plate_score, snapshot, camera_name, plate_number, logger):
+def save_image(config:Config, snapshot_path,  plate_score, snapshot, camera_name, plate_number, frigate_id, logger):
     timestamp = datetime.now().strftime(config.date_format)
-    image_name = f"{camera_name}_{timestamp}.png"
+    image_name = f"{camera_name}__{uuid.uuid4()}_{timestamp}.png"
     logger.info(f"{datetime.now()} saving  plate({plate_number}) image {image_name}")
     if plate_number:
         image_name = f"{str(plate_number).upper()}_{int(plate_score* 100)}%_{image_name}"
-    image_path = f"{config.snapshot_path}/{image_name}"
+    else:
+        image_name = f"{frigate_id}_{image_name}"
+    image_path = f"{snapshot_path}/{image_name}"
 
     image_array = np.frombuffer(snapshot, np.uint8)
     frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
@@ -228,16 +233,13 @@ def save_image(config:Config, plate_score, snapshot, camera_name, plate_number, 
     logger.info(f"successfully saved image with path: {image_path}")
     return image_path
 
-#
-# def save_snap(snapshot, camera_name):
-#     test_image_dir = SNAPSHOT_PATH + "/test"
-#     os.makedirs(test_image_dir, exist_ok=True)
-#     timestamp = datetime.now().strftime(DATETIME_FORMAT)
-#     image_name = f"{camera_name}_{timestamp}_{uuid.uuid4()}.png"
-#     image_path = f"{test_image_dir}/{image_name}"
+# def save_snap(config, snapshot, frigate_id, camera_name, logger):
+#     timestamp = datetime.now().strftime(config.date_format)
+#     image_name = f"{camera_name}_{frigate_id}_{timestamp}_{uuid.uuid4()}.png"
+#     image_path = f"{config.debug_snapshot_path}/{image_name}"
 #     with open(image_path, "wb") as file:
 #         file.write(snapshot)
-#         print(f"{timestamp} saved snapshot {image_path}")
+#         logger.debug(f"{timestamp} saved snapshot {image_path}")
 
 
 def get_plate(config:Config, snapshot, logger):
@@ -263,22 +265,19 @@ def get_db_event_direction(config, frigate_event_id, logger):
     results = select_from_table(config.db_path , config.table, columns,  where, params, logger )
     return results
 
-def delete_old_files(config, logger):
-
-    folder_path = config.snapshot_path
-    days=config.get('days_to_keep_images_in_days')
+def delete_old_files(days_to_keep_images_in_days, path, logger):
 
     now = time.time()
-    cutoff = now - (days * 86400)  # 86400 seconds in a day
+    cutoff = now - (days_to_keep_images_in_days * 86400)  # 86400 seconds in a day
 
-    for filename in os.listdir(folder_path):
-        file_path = os.path.join(folder_path, filename)
+    for filename in os.listdir(path):
+        file_path = os.path.join(path, filename)
 
         if os.path.isfile(file_path):
             file_mtime = os.path.getmtime(file_path)
             if file_mtime < cutoff:
                 try:
                     os.remove(file_path)
-                    print(f"Deleted: {file_path}")
+                    logger.debug(f"Deleted: {file_path}")
                 except Exception as e:
-                    print(f"Failed to delete {file_path}: {e}")
+                    logger.debug(f"Failed to delete {file_path}: {e}")

@@ -28,6 +28,7 @@ def process_message(config:Config, message, mqtt_client, logger):
         return
 
     config.executor.submit(get_vehicle_direction, config, after_data, frigate_event_id, logger)
+    # get_vehicle_direction(config, after_data, frigate_event_id, logger)
 
     if event_type == "new":
         logger.info(f"Starting new thread for new event{event_type} for {frigate_event_id}***************")
@@ -38,11 +39,11 @@ def begin_process(config:Config, after_data, frigate_event_id, mqtt_client, logg
     loop = 0
     while event_type in ["update", "new"] and not is_plate_found_for_event(config, frigate_event_id, logger):
         loop=loop + 1
-        timestamp = datetime.now()
-        logger.info(f"{timestamp} start processing loop {loop} for {frigate_event_id}")
-        config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, mqtt_client, logger)
-        time.sleep(0.5)
-
+        logger.info(f"start processing loop {loop} for {frigate_event_id}")
+        # config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, mqtt_client, logger)
+        process_plate_detection(config,  after_data['camera'], frigate_event_id, mqtt_client, logger)
+        # time.sleep(0.5)
+        logger.info(f"Done processing loop {loop}, {event_type}")
     logger.info(f"Done processing event {frigate_event_id}, {event_type}")
 
 
@@ -71,14 +72,24 @@ def is_duplicate_event(config:Config, frigate_event_id, logger):
     where = 'frigate_event_id = ?'
     params = (frigate_event_id,)
     results = select_from_table(config.db_path , config.table, columns,  where, params, logger )
-    return True if results else False
+    if results and results[0]['plate_found'] is None:
+        return False
+    elif results and results[0]['plate_found'] is not None:
+        return True
+    elif not results:
+        return False
 
 def is_plate_found_for_event(config, frigate_event_id, logger):
     columns = '*'
     where = 'frigate_event_id = ?'
     params = (frigate_event_id,)
     results = select_from_table(config.db_path , config.table, columns,  where, params, logger )
-    return True if results else False
+    if results and results[0]['plate_found'] is None:
+        return False
+    elif results and results[0]['plate_found'] is not None:
+        return True
+    elif not results:
+        return False
 
 def get_snapshot(config:Config, frigate_event_id, cropped, camera_name, logger):
     logger.debug(f"Getting snapshot for event: {frigate_event_id}, Crop: {cropped}")

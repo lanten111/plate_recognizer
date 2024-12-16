@@ -1,5 +1,3 @@
-#!/bin/python3
-
 import os
 import logging
 from datetime import datetime
@@ -42,6 +40,7 @@ def main():
     logger = load_logger(config)
 
     os.makedirs(config.snapshot_path, exist_ok=True)
+    os.makedirs(config.debug_snapshot_path, exist_ok=True)
 
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
     logger.info(f"Time: {current_time}")

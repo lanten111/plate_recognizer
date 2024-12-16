@@ -1,8 +1,10 @@
 import time
-import paho.mqtt.client as mqtt
-from modules.frigate import process_message
+from xmlrpc.client import Error
 
-mqtt_client = None
+import paho.mqtt.client as mqtt
+from numpy.f2py.auxfuncs import throw_error
+
+from modules.frigate import process_message
 
 def run_mqtt_client(config, logger):
 
@@ -27,7 +29,11 @@ def run_mqtt_client(config, logger):
 def on_message(mqtt_client, userdata, message):
     logger = userdata.get("logger")
     config = userdata.get("config")
-    process_message(config, message, mqtt_client, logger)
+    try:
+        process_message(config, message, mqtt_client, logger)
+    except Exception as e:
+        logger.error(f"Something went wrong processing event: {e}")
+        raise Error(e)
 
 def on_connect(mqtt_client, userdata, flags, reason_code, properties):
     logger = userdata.get("logger")
