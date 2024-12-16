@@ -71,9 +71,10 @@ def select_from_table(db_file, table, columns='*', where=None, params=None, logg
     :param params: Optional tuple of parameters to pass into the query.
     :return: List of dictionaries representing the rows returned by the query.
     """
-    query = f"SELECT {columns} FROM {table}"
+    query = f"SELECT {columns} FROM {table}C"
     if where:
-        query += f" WHERE {where}"
+        query += f" WHERE {where} ORDER BY created_date  DESC"
+    query += " ORDER BY created_date DESC"
 
     return execute_query(db_file, query, params, logger)
 

@@ -26,7 +26,7 @@ def process_plate_detection(config:Config, camera_name, frigate_event_id, mqtt_c
         detected_plate, detected_plate_score = get_plate(config, snapshot, logger)
         watched_plate, fuzzy_score, watched_plates = check_watched_plates(config, detected_plate, logger)
 
-        if watched_plate is not None and fuzzy_score is not None:
+        if (watched_plate is not None and fuzzy_score is not None) or config.fuzzy_match is None:
             store_plate_in_db(config, None, detected_plate, round(fuzzy_score, 2), frigate_event_id, camera_name, watched_plate, True, logger)
             image_path = save_image(config, config.snapshot_path,  detected_plate_score, snapshot, camera_name, detected_plate, frigate_event_id, logger)
             send_mqtt_message(config , detected_plate_score, frigate_event_id, camera_name, detected_plate,
@@ -46,7 +46,6 @@ def get_latest_snapshot(config:Config, frigate_event_id, camera_name, logger):
     snapshot = response.content
     return snapshot
 
-
 def store_plate_in_db(config:Config, detection_time, detected_plate_number, fuzzy_score, frigate_event_id, camera_name, watched_plate, plate_found, logger ):
     logger.info(f"storing plate({detected_plate_number}) in db for event {frigate_event_id}")
     columns = '*'
@@ -65,7 +64,6 @@ def store_plate_in_db(config:Config, detection_time, detected_plate_number, fuzz
         insert_into_table(config.db_path, config.table, columns, values, logger)
         logger.info(f"inserted db for event  {frigate_event_id}.")
 
-
 def get_vehicle_direction(config:Config,  after_data, frigate_event_id, logger):
     direction = get_db_event_direction(config, frigate_event_id, logger)
     if len(after_data['current_zones']) > 0:
@@ -74,22 +72,24 @@ def get_vehicle_direction(config:Config,  after_data, frigate_event_id, logger):
             cameras = config.camera
             for camera in cameras:
                 if camera == after_data['camera']:
-                    if current_zone.lower() == config.camera.get(camera).first_zone:
-                        values = (frigate_event_id, 'entering')
-                    elif current_zone.lower() == config.camera.get(camera).last_zone:
-                        values = (frigate_event_id, 'exiting')
+                    if config.camera.get(camera).first_zone and config.camera.get(camera).last_zone:
+                        if current_zone.lower() == config.camera.get(camera).first_zone.lower():
+                            values = (frigate_event_id, 'entering')
+                        elif current_zone.lower() == config.camera.get(camera).last_zone.lower():
+                            values = (frigate_event_id, 'exiting')
+                        else:
+                            values = (frigate_event_id, 'unknown')
+                        columns = ('frigate_event_id', 'vehicle_direction')
+                        insert_into_table(config.db_path, config.table, columns, values, logger)
                     else:
-                        values = (frigate_event_id, 'unknown')
-                    columns = ('frigate_event_id', 'vehicle_direction')
-                    insert_into_table(config.db_path, config.table, columns, values, logger)
+                        logger.info(f"skipping vehicle direction direction for {frigate_event_id}, missing first_zone and or last_zone in config.")
         else:
             logger.info(f"event  {frigate_event_id} vehicle direction exit as {direction}.")
     else:
-        logger.info(f"event  {frigate_event_id} does not contain zone, skipping direction detection")
+        logger.info(f"skipping direction detection for event  {frigate_event_id} does not contain zone, ")
 
 def send_mqtt_message(config, plate_score, frigate_event_id, camera_name, detected_plate, watched_plate, watched_plates, fuzzy_score, image_path, mqtt_client, logger):
-    logger.info(f"{datetime.now()} sending mqtt message for  plate({detected_plate})")
-    timestamp = datetime.now().strftime(config.date_format)
+    logger.info(f"sending mqtt message for  plate({detected_plate})")
 
     def watched_plates_to_json(watched_plates) -> str:
         plates_as_dicts = [asdict(plate) for plate in watched_plates]
@@ -111,7 +111,14 @@ def send_mqtt_message(config, plate_score, frigate_event_id, camera_name, detect
 
     }
 
-    vehicle_data['matched'] = vehicle_data['fuzzy_score'] > 0.8
+    #wait for trigger zone to trigger the on condition
+    if config.camera.get(camera_name).trigger_zones is not None:
+        logger.info(f"setting detected to false due to trigger zone present({config.camera.get(camera_name).trigger_zones})")
+        vehicle_data['matched'] = False
+    else:
+        logger.info(f"setting detected to true")
+        vehicle_data['matched'] = True
+
     columns = 'vehicle_direction'
     where = 'frigate_event_id = ?'
     params = (frigate_event_id,)
@@ -209,10 +216,14 @@ def check_watched_plates(config:Config, detected_plate, logger):
         if seq.ratio() > max_score:
             max_score = seq.ratio()
             best_match = watched_plate
+    if max_score > config.fuzzy_match:
+        logger.info(f"Best fuzzy_match: {best_match} ({max_score})")
+        return best_match, max_score, config_watched_plates
+    else:
+        logger.info(f"Fuzzy match too low for : {best_match} with score ({max_score})")
+        return None, None, None
 
-    logger.info(f"Best fuzzy_match: {best_match} ({max_score})")
 
-    return best_match, max_score, config_watched_plates
 
 
 def save_image(config:Config, snapshot_path,  plate_score, snapshot, camera_name, plate_number, frigate_id, logger):

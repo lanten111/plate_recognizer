@@ -26,7 +26,7 @@ class FastAlprConfig:
 @dataclass
 class Config:
     watched_plates: List[WatchedPlate] = field(default_factory=list)
-    fuzzy_match: Optional[float] = 0
+    fuzzy_match: Optional[float] = None
     save_snapshots: Optional[bool] = False
     frigate_url: Optional[str] = None
     mqtt_server: Optional[str] = None

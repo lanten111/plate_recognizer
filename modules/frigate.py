@@ -21,11 +21,16 @@ def process_message(config:Config, message, mqtt_client, logger):
     event_type = payload_dict.get("type", "")
     frigate_event_id = after_data["id"]
 
+    #add trigger for detectied
+
     if is_invalid_event(config, after_data, logger):
         return
 
     if is_duplicate_event(config, frigate_event_id, logger):
         return
+
+
+    # trigger_detected_on_zone(config, after_data, mqtt_client, logger)
 
     config.executor.submit(get_vehicle_direction, config, after_data, frigate_event_id, logger)
     # get_vehicle_direction(config, after_data, frigate_event_id, logger)
@@ -33,6 +38,22 @@ def process_message(config:Config, message, mqtt_client, logger):
     if event_type == "new":
         logger.info(f"Starting new thread for new event{event_type} for {frigate_event_id}***************")
         config.executor.submit(begin_process, config, after_data, frigate_event_id, mqtt_client, logger)
+
+def trigger_detected_on_zone(config, after_data, mqtt_client, logger):
+        results = select_from_table(config.db_path , config.table, logger=logger )
+        if results and results[0].get('plate_found') == 1:
+            if len(after_data['current_zones']) > 0:
+                    current_zone = after_data['current_zones'][0]
+                    cameras = config.camera
+                    for camera in cameras:
+                        if len(config.camera.get(camera).trigger_zones) > 0:
+                            if camera.lower() == results[0].get('camera_name'):
+                                if current_zone in config.camera.get('camera').trigger_zones:
+                                    state_topic = f"homeassistant/binary_sensor/vehicle_data/matched/state"
+                                    mqtt_client.publish(state_topic, True , retain=True)
+                                    time.sleep(10)
+                                    mqtt_client.publish(state_topic, False, retain=True)
+
 
 def begin_process(config:Config, after_data, frigate_event_id, mqtt_client, logger):
     global event_type
