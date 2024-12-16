@@ -2,6 +2,7 @@ import time
 import paho.mqtt.client as mqtt
 from modules.frigate import process_message
 
+mqtt_client = None
 
 def run_mqtt_client(config, logger):
 
@@ -26,7 +27,7 @@ def run_mqtt_client(config, logger):
 def on_message(mqtt_client, userdata, message):
     logger = userdata.get("logger")
     config = userdata.get("config")
-    process_message(config, message, logger)
+    process_message(config, message, mqtt_client, logger)
 
 def on_connect(mqtt_client, userdata, flags, reason_code, properties):
     logger = userdata.get("logger")

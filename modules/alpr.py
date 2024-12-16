@@ -19,7 +19,7 @@ def fast_alpr(config, snapshot, logger):
 
     alpr_results = get_alpr(config, logger).predict(frame)
 
-    print(alpr_results)
+    logger.info(f"detection results {alpr_results}")
 
     for result in alpr_results:
         ocr_text = result.ocr.text

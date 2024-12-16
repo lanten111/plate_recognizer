@@ -10,7 +10,7 @@ from modules.detection import get_vehicle_direction, process_plate_detection
 
 event_type = None
 
-def process_message(config:Config,  message, logger):
+def process_message(config:Config, message, mqtt_client, logger):
 
     global event_type
     payload_dict = json.loads(message.payload)
@@ -30,20 +30,20 @@ def process_message(config:Config,  message, logger):
     config.executor.submit(get_vehicle_direction, config, after_data, frigate_event_id, logger)
 
     if event_type == "new":
-        print(f"Starting new thread for new event{event_type} for {frigate_event_id}***************")
-        config.executor.submit(begin_process, config, after_data, frigate_event_id, logger)
+        logger.info(f"Starting new thread for new event{event_type} for {frigate_event_id}***************")
+        config.executor.submit(begin_process, config, after_data, frigate_event_id, mqtt_client, logger)
 
-def begin_process(config:Config, after_data, frigate_event_id, logger):
+def begin_process(config:Config, after_data, frigate_event_id, mqtt_client, logger):
     global event_type
     loop = 0
     while event_type in ["update", "new"] and not is_plate_found_for_event(config, frigate_event_id, logger):
         loop=loop + 1
         timestamp = datetime.now()
-        print(f"{timestamp} start processing loop {loop} for {frigate_event_id}")
-        config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, logger)
+        logger.info(f"{timestamp} start processing loop {loop} for {frigate_event_id}")
+        config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, mqtt_client, logger)
         time.sleep(0.5)
 
-    print(f"Done processing event {frigate_event_id}, {event_type}")
+    logger.info(f"Done processing event {frigate_event_id}, {event_type}")
 
 
 def is_invalid_event(config:Config, after_data, logger):
@@ -60,7 +60,7 @@ def is_invalid_event(config:Config, after_data, logger):
         return True
 
     valid_objects = config.default_objects
-    if after_data['label'] in valid_objects:
+    if after_data['label'] not in valid_objects:
         logger.debug(f"is not a correct label: {after_data['label']}")
         return True
 
@@ -70,14 +70,14 @@ def is_duplicate_event(config:Config, frigate_event_id, logger):
     columns = '*'
     where = 'frigate_event_id = ?'
     params = (frigate_event_id,)
-    results = select_from_table(config.db_path , config.table, columns,  where, params )
+    results = select_from_table(config.db_path , config.table, columns,  where, params, logger )
     return True if results else False
 
 def is_plate_found_for_event(config, frigate_event_id, logger):
     columns = '*'
     where = 'frigate_event_id = ?'
     params = (frigate_event_id,)
-    results = select_from_table(config.db_path , config.table, columns,  where, params )
+    results = select_from_table(config.db_path , config.table, columns,  where, params, logger )
     return True if results else False
 
 def get_snapshot(config:Config, frigate_event_id, cropped, camera_name, logger):

@@ -36,6 +36,7 @@ class Config:
     date_format: Optional[str] = None
     config_dir: Optional[str] = None
     table: Optional[str] = None
+    manufacturer: Optional[str] = "Plate Detection"
     executor: Optional[any] = None
     default_objects: List = None
     main_topic: Optional[str] = None
@@ -96,6 +97,7 @@ def get_yaml_config() -> Config:
         default_objects=default_objects,
         table=table,
         mqtt_server=data.get('plate_recogniser', {}).get('mqtt_server'),
+        manufacturer=data.get('plate_recogniser', {}).get('manufacturer'),
         mqtt_port=data.get('plate_recogniser', {}).get('mqtt_port'),
         mqtt_username=data.get('plate_recogniser', {}).get('mqtt_username'),
         mqtt_password=data.get('plate_recogniser', {}).get('mqtt_password'),

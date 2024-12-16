@@ -1,6 +1,5 @@
 import sqlite3
 
-
 def setup_db(config):
     conn = sqlite3.connect(config.db_path)
     cursor = conn.cursor()
@@ -22,10 +21,11 @@ def setup_db(config):
     conn.close()
 
 
-def execute_query(db_file, query, params=None):
+def execute_query(db_file, query, params=None, logger=None):
     """
     Executes a query (SELECT, INSERT, UPDATE, DELETE) on the SQLite database.
 
+    :param logger:
     :param db_file: Path to the SQLite database file.
     :param query: The SQL query to execute.
     :param params: Optional tuple of parameters to be used in the query (default is None).
@@ -50,7 +50,7 @@ def execute_query(db_file, query, params=None):
             result = [dict(row) for row in cursor.fetchall()]
 
     except sqlite3.Error as e:
-        print(f"SQLite error: {e}")
+        logger.error(f"SQLite error: {e}")
         result = None
 
     finally:
@@ -59,10 +59,11 @@ def execute_query(db_file, query, params=None):
 
     return result
 
-def select_from_table(db_file, table, columns='*', where=None, params=None):
+def select_from_table(db_file, table, columns='*', where=None, params=None, logger=None):
     """
     Executes a SELECT query on a specified table.
 
+    :param logger:
     :param db_file: Path to the SQLite database file.
     :param table: Name of the table to query.
     :param columns: Columns to select (default is all columns '*').
@@ -74,12 +75,13 @@ def select_from_table(db_file, table, columns='*', where=None, params=None):
     if where:
         query += f" WHERE {where}"
 
-    return execute_query(db_file, query, params)
+    return execute_query(db_file, query, params, logger)
 
-def insert_into_table(db_file, table, columns, values):
+def insert_into_table(db_file, table, columns, values, logger):
     """
     Executes an INSERT query on a specified table.
 
+    :param logger:
     :param db_file: Path to the SQLite database file.
     :param table: Name of the table to insert into.
     :param columns: A string or tuple of column names to insert into.
@@ -87,12 +89,13 @@ def insert_into_table(db_file, table, columns, values):
     :return: None
     """
     query = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(['?'] * len(values))})"
-    return execute_query(db_file, query, values)
+    return execute_query(db_file, query, values, logger)
 
-def update_table(db_file, table, set_clause, where, params):
+def update_table(db_file, table, set_clause, where, params, logger=None):
     """
     Executes an UPDATE query on a specified table.
 
+    :param logger:
     :param db_file: Path to the SQLite database file.
     :param table: Name of the table to update.
     :param set_clause: The SET clause to update columns (e.g., 'column1 = ?, column2 = ?').
@@ -101,12 +104,13 @@ def update_table(db_file, table, set_clause, where, params):
     :return: None
     """
     query = f"UPDATE {table} SET {set_clause} WHERE {where}"
-    return execute_query(db_file, query, params)
+    return execute_query(db_file, query, params, logger)
 
-def delete_from_table(db_file, table, where, params):
+def delete_from_table(db_file, table, where, params, logger):
     """
     Executes a DELETE query on a specified table.
 
+    :param logger:
     :param db_file: Path to the SQLite database file.
     :param table: Name of the table to delete from.
     :param where: The WHERE condition to specify which rows to delete.
@@ -114,86 +118,4 @@ def delete_from_table(db_file, table, where, params):
     :return: None
     """
     query = f"DELETE FROM {table} WHERE {where}"
-    return execute_query(db_file, query, params)
-
-
-
-# def get_db_event_direction(frigate_event_id):
-#     conn = sqlite3.connect(DB_PATH)
-#     cursor = conn.cursor()
-#     cursor.execute("""SELECT vehicle_direction FROM plates WHERE frigate_event_id = ?""", (frigate_event_id,))
-#     row = cursor.fetchone()
-#     conn.close()
-#     return row
-
-
-# def store_plate_in_db(detection_time, detected_plate_number, fuzzy_score, frigate_event_id, camera_name, watched_plate, plate_found ):
-#     try:
-#         conn = sqlite3.connect(DB_PATH)
-#         cursor = conn.cursor()
-#
-#         _LOGGER.info(f"Storing plate number in database: {detected_plate_number} with score: {fuzzy_score}")
-#
-#         cursor.execute("""SELECT id FROM plates WHERE frigate_event_id = ?""", (frigate_event_id,))
-#         event_id = cursor.fetchone()
-#
-#         if event_id:
-#             cursor.execute("""
-#                 UPDATE plates
-#                 SET detection_time = ?,
-#                     fuzzy_score = ?,
-#                     detected_plate_number = ?,
-#                     frigate_event_id = ?,
-#                     camera_name = ?,
-#                     watched_plate = ?,
-#                     plate_found = ?
-#                 WHERE id = ?
-#             """, (detection_time, fuzzy_score, detected_plate_number, frigate_event_id, camera_name, watched_plate, plate_found, event_id[0]))
-#
-#         else:
-#             cursor.execute("""INSERT INTO plates (detection_time, fuzzy_score , detected_plate_number, frigate_event_id , camera_name, watched_plate, plate_found  ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-#                            (detection_time, fuzzy_score, detected_plate_number, frigate_event_id, camera_name,watched_plate, plate_found))
-#         conn.commit()
-#     except sqlite3.Error as e:
-#         _LOGGER.error(f"Database error: {e}")
-#     finally:
-#         conn.close()
-
-
-
-# def is_plate_found_for_event(frigate_event_id):
-#     conn = sqlite3.connect(DB_PATH)
-#     cursor = conn.cursor()
-#     cursor.execute("""SELECT plate_found FROM plates WHERE frigate_event_id = ?""", (frigate_event_id,))
-#     result = cursor.fetchone()
-#     conn.close()
-#     return bool(result[0]) if result else None
-
-
-
-# def store_vehicle_direction_in_db(vehicle_direction, frigate_event_id):
-#     try:
-#         conn = sqlite3.connect(DB_PATH)
-#         cursor = conn.cursor()
-#         _LOGGER.info(f"Storing vehicle direction number in database: {vehicle_direction} for event: {frigate_event_id}")
-#         cursor.execute("""INSERT INTO plates (vehicle_direction, frigate_event_id) VALUES (?, ?)""",
-#                        (vehicle_direction, frigate_event_id))
-#         conn.commit()
-#     except sqlite3.Error as e:
-#         _LOGGER.error(f"Database error: {e}")
-#     finally:
-#         conn.close()
-
-# def is_duplicate_event(frigate_event_id):
-#     # see if we have already processed this event
-#     conn = sqlite3.connect(DB_PATH)
-#     cursor = conn.cursor()
-#     cursor.execute("""SELECT * FROM plates WHERE frigate_event_id = ?""", (frigate_event_id,))
-#     row = cursor.fetchone()
-#     conn.close()
-#
-#     if row is not None:
-#         _LOGGER.debug(f"Skipping event: {frigate_event_id} because it has already been processed")
-#         return True
-#
-#     return False
+    return execute_query(db_file, query, params, logger)
