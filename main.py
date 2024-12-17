@@ -7,7 +7,7 @@ import sys
 
 from modules.config import get_yaml_config
 from modules.database import setup_db
-from modules.mqtt import run_mqtt_client
+from modules.mqtt.receiver import run_mqtt_client
 
 VERSION = '2.1.1'
 

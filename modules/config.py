@@ -12,11 +12,14 @@ class WatchedPlate:
     car_brand: Optional[str] = None
 
 @dataclass
-class CameraConfig:
+class CameraDirectionConfig:
     first_zone: Optional[str] = None
     last_zone: Optional[str] = None
-    trigger_zones: List[str] = field(default_factory=list)
 
+@dataclass
+class CameraConfig:
+    direction: Optional[CameraDirectionConfig] = None
+    trigger_zones: List[str] = field(default_factory=list)
 
 @dataclass
 class FastAlprConfig:
@@ -80,12 +83,13 @@ def get_yaml_config() -> Config:
 
     camera = {
         name: CameraConfig(
-            first_zone=cfg.get('first_zone'),
-            last_zone=cfg.get('last_zone'),
+            direction=CameraDirectionConfig(
+                first_zone=cfg.get('direction', {}).get('first_zone'),
+                last_zone=cfg.get('direction', {}).get('last_zone')
+            ),
             trigger_zones=cfg.get('trigger_zones', [])
         ) for name, cfg in data.get('plate_recogniser', {}).get('camera', {}).items()
     }
-
 
     db_path = resolve_path(data.get('plate_recogniser', {}).get('db_path', 'plate_recogniser.db'))
     log_file_path = resolve_path(data.get('plate_recogniser', {}).get('log_file_path', 'late_recogniser.log'))

@@ -6,7 +6,8 @@ import requests
 
 from modules.config import Config
 from modules.database import select_from_table
-from modules.detection import get_vehicle_direction, process_plate_detection
+from modules.detection import get_vehicle_direction, process_plate_detection, create_or_update_plate
+from modules.mqtt.sender import send_mqtt_message
 
 event_type = None
 
@@ -26,46 +27,56 @@ def process_message(config:Config, message, mqtt_client, logger):
     if is_invalid_event(config, after_data, logger):
         return
 
+    logger.info(f"new message with status {event_type} for event id {frigate_event_id}")
+    config.executor.submit(trigger_detected_on_zone, config, after_data, mqtt_client, logger)
+
     if is_duplicate_event(config, frigate_event_id, logger):
         return
 
-
-    # trigger_detected_on_zone(config, after_data, mqtt_client, logger)
-
     config.executor.submit(get_vehicle_direction, config, after_data, frigate_event_id, logger)
-    # get_vehicle_direction(config, after_data, frigate_event_id, logger)
 
     if event_type == "new":
         logger.info(f"Starting new thread for new event{event_type} for {frigate_event_id}***************")
         config.executor.submit(begin_process, config, after_data, frigate_event_id, mqtt_client, logger)
 
-def trigger_detected_on_zone(config, after_data, mqtt_client, logger):
-        results = select_from_table(config.db_path , config.table, logger=logger )
-        if results and results[0].get('plate_found') == 1:
-            if len(after_data['current_zones']) > 0:
-                    current_zone = after_data['current_zones'][0]
-                    cameras = config.camera
-                    for camera in cameras:
-                        if len(config.camera.get(camera).trigger_zones) > 0:
-                            if camera.lower() == results[0].get('camera_name'):
-                                if current_zone in config.camera.get('camera').trigger_zones:
-                                    state_topic = f"homeassistant/binary_sensor/vehicle_data/matched/state"
-                                    mqtt_client.publish(state_topic, True , retain=True)
-                                    time.sleep(10)
-                                    mqtt_client.publish(state_topic, False, retain=True)
-
 
 def begin_process(config:Config, after_data, frigate_event_id, mqtt_client, logger):
     global event_type
     loop = 0
-    while event_type in ["update", "new"] and not is_plate_found_for_event(config, frigate_event_id, logger):
+    while event_type in ["update", "new"] and not is_plate_matched_for_event(config, frigate_event_id, logger):
         loop=loop + 1
         logger.info(f"start processing loop {loop} for {frigate_event_id}")
         # config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, mqtt_client, logger)
-        process_plate_detection(config,  after_data['camera'], frigate_event_id, mqtt_client, logger)
+        process_plate_detection(config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client, logger)
+        # time.sleep(0.5)
         # time.sleep(0.5)
         logger.info(f"Done processing loop {loop}, {event_type}")
     logger.info(f"Done processing event {frigate_event_id}, {event_type}")
+
+def trigger_detected_on_zone(config, after_data, mqtt_client, logger):
+    frigate_event_id = after_data["id"]
+    entered_zones = after_data['entered_zones']
+    where = 'frigate_event_id = ?'
+    params = (frigate_event_id,)
+    results = select_from_table(config.db_path , config.table, "*",  where, params, logger)
+    if len(results) > 0 and results[0].get('vehicle_detected') == 1 and results[0].get('trigger_zone_reached') != 1:
+        for camera in config.camera:
+            trigger_zones = config.camera.get(camera).trigger_zones
+            if len(config.camera.get(camera).trigger_zones) > 0:
+                if camera.lower() == results[0].get('camera_name'):
+                    if set(trigger_zones) & set(entered_zones):
+                        logger.info(f"trigger zone {trigger_zones} reached, sending a mqtt message({config.camera.get(camera).trigger_zones})")
+                        create_or_update_plate(config, frigate_event_id, trigger_zone_reached=True, entered_zones=json.dumps(entered_zones), logger=logger)
+                        # update_plate_db_zones_status(config, frigate_event_id, True, json.dumps(entered_zones), logger)
+                        send_mqtt_message(config , results[0], mqtt_client, logger)
+                    else:
+                        logger.info(f"trigger zone {trigger_zones} not reached, current reached {entered_zones}")
+                else:
+                    logger.info(f"current camera does not match {camera} not reached, current reached {results[0].get('camera_name')}")
+            else:
+                logger.info(f"trigger zones empty, skipping")
+    else:
+        logger.info(f"No entry in db for event {frigate_event_id} or plate not matched")
 
 
 def is_invalid_event(config:Config, after_data, logger):
@@ -93,21 +104,21 @@ def is_duplicate_event(config:Config, frigate_event_id, logger):
     where = 'frigate_event_id = ?'
     params = (frigate_event_id,)
     results = select_from_table(config.db_path , config.table, columns,  where, params, logger )
-    if results and results[0]['plate_found'] is None:
+    if results and results[0]['matched'] is None:
         return False
-    elif results and results[0]['plate_found'] is not None:
+    elif results and results[0]['matched'] is not None:
         return True
     elif not results:
         return False
 
-def is_plate_found_for_event(config, frigate_event_id, logger):
+def is_plate_matched_for_event(config, frigate_event_id, logger):
     columns = '*'
     where = 'frigate_event_id = ?'
     params = (frigate_event_id,)
     results = select_from_table(config.db_path , config.table, columns,  where, params, logger )
-    if results and results[0]['plate_found'] is None:
+    if results and results[0]['matched'] is None:
         return False
-    elif results and results[0]['plate_found'] is not None:
+    elif results and results[0]['matched'] is not None:
         return True
     elif not results:
         return False
