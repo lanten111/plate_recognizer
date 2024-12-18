@@ -21,4 +21,4 @@ RUN mkdir -p /plates /config
 ENV PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["python"]
-CMD ["./index.py"]
+CMD ["./main.py"]
