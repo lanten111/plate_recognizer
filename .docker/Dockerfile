@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 ENV LOCAL=false
 
-COPY index.py .
+COPY main.py .
+COPY modules .
 
 RUN mkdir -p /plates /config
 
