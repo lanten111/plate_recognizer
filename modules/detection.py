@@ -90,7 +90,7 @@ def get_vehicle_direction(config:Config,  after_data, frigate_event_id, logger):
                     else:
                         logger.info(f"skipping vehicle direction direction for {frigate_event_id}, missing first_zone and or last_zone in config.")
         else:
-            logger.info(f"event  {frigate_event_id} vehicle direction exit as {"to do"}.")
+            logger.info(f"event  {frigate_event_id} vehicle direction exit as.")
     else:
         logger.info(f"skipping direction detection for event  {frigate_event_id} does not contain zone, ")
 

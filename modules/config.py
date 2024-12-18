@@ -58,8 +58,8 @@ class Config:
     logger_level: Optional[str] = None
 
 def get_yaml_config() -> Config:
-    LOCAL = os.getenv('LOCAL', 'True').lower() == 'true'
-    config_dir = "config" if LOCAL else "/config"
+    local = os.getenv('LOCAL', 'True').lower() == 'true'
+    config_dir = "config" if local else "/config"
 
     # Load YAML content
     config_path = os.path.join(config_dir, "config.yml")
