@@ -50,7 +50,7 @@ class Config:
     return_topic: Optional[str] = None
     discovery_topic: Optional[str] = None
     days_to_keep_images_in_days: Optional[int] = None
-    watched_binary_sensor_reset_in_sec: Optional[int] = 50
+    binary_sensor_reset_in_sec: Optional[int] = 10
     camera: Dict[str, CameraConfig] = field(default_factory=dict)
     objects: List[str] = field(default_factory=list)
     min_score: Optional[float] = None
@@ -125,7 +125,7 @@ def get_yaml_config() -> Config:
         return_topic=data.get('plate_recogniser', {}).get('return_topic'),
         discovery_topic=data.get('plate_recogniser', {}).get('discovery_topic'),
         days_to_keep_images_in_days=data.get('plate_recogniser', {}).get('days_to_keep_images_in_days'),
-        watched_binary_sensor_reset_in_sec=data.get('plate_recogniser', {}).get('watched_binary_sensor_reset_in_sec'),
+        binary_sensor_reset_in_sec=data.get('plate_recogniser', {}).get('binary_sensor_reset_in_sec'),
         camera=camera,
         objects=data.get('plate_recogniser', {}).get('objects', []),
         min_score=data.get('plate_recogniser', {}).get('min_score'),

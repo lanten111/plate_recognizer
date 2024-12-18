@@ -2,7 +2,6 @@ import time
 from xmlrpc.client import Error
 
 import paho.mqtt.client as mqtt
-from numpy.f2py.auxfuncs import throw_error
 
 from modules.frigate import process_message
 

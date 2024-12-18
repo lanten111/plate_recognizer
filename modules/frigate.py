@@ -1,11 +1,10 @@
 import json
+import logging
 import time
-from datetime import datetime
 
 import requests
-
 from modules.config import Config
-from modules.database import select_from_table
+from modules.database import select_from_table, get_plate
 from modules.detection import get_vehicle_direction, process_plate_detection, create_or_update_plate
 from modules.mqtt.sender import send_mqtt_message
 
@@ -46,33 +45,32 @@ def begin_process(config:Config, after_data, frigate_event_id, mqtt_client, logg
     while event_type in ["update", "new"] and not is_plate_matched_for_event(config, frigate_event_id, logger):
         loop=loop + 1
         logger.info(f"start processing loop {loop} for {frigate_event_id}")
-        # config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, mqtt_client, logger)
+        # config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client, logger)
         process_plate_detection(config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client, logger)
-        # time.sleep(0.5)
-        # time.sleep(0.5)
         logger.info(f"Done processing loop {loop}, {event_type}")
+        # time.sleep(0.2)
     logger.info(f"Done processing event {frigate_event_id}, {event_type}")
 
 def trigger_detected_on_zone(config, after_data, mqtt_client, logger):
+    logger = logging.getLogger(__name__)
     frigate_event_id = after_data["id"]
     entered_zones = after_data['entered_zones']
-    where = 'frigate_event_id = ?'
-    params = (frigate_event_id,)
-    results = select_from_table(config.db_path , config.table, "*",  where, params, logger)
-    if len(results) > 0 and results[0].get('vehicle_detected') == 1 and results[0].get('trigger_zone_reached') != 1:
+    results = get_plate(config, frigate_event_id, logger)
+    # remove is_watched_plate_matched in case a zone is reached before is_trigger_zone_reached
+    if len(results) == 0 or (len(results) > 0 and results[0].get('is_trigger_zone_reached') != 1 or results[0].get('is_trigger_zone_reached') is None):
         for camera in config.camera:
             trigger_zones = config.camera.get(camera).trigger_zones
             if len(config.camera.get(camera).trigger_zones) > 0:
                 if camera.lower() == results[0].get('camera_name'):
                     if set(trigger_zones) & set(entered_zones):
-                        logger.info(f"trigger zone {trigger_zones} reached, sending a mqtt message({config.camera.get(camera).trigger_zones})")
-                        create_or_update_plate(config, frigate_event_id, trigger_zone_reached=True, entered_zones=json.dumps(entered_zones), logger=logger)
-                        # update_plate_db_zones_status(config, frigate_event_id, True, json.dumps(entered_zones), logger)
-                        send_mqtt_message(config , results[0], mqtt_client, logger)
+                        logger.info(f"db storing plate or updating for trigger zone for event {frigate_event_id}")
+                        create_or_update_plate(config, frigate_event_id, is_trigger_zone_reached=True, entered_zones=entered_zones, logger=logger)
+                        logger.info(f"trigger zone ({config.camera.get(camera).trigger_zones})  reached, sending a mqtt message {trigger_zones}")
+                        send_mqtt_message(config , frigate_event_id , mqtt_client, logger)
                     else:
                         logger.info(f"trigger zone {trigger_zones} not reached, current reached {entered_zones}")
                 else:
-                    logger.info(f"current camera does not match {camera} not reached, current reached {results[0].get('camera_name')}")
+                    logger.info(f"current camera does not match {camera}, current reached {results[0].get('camera_name')}")
             else:
                 logger.info(f"trigger zones empty, skipping")
     else:
@@ -100,25 +98,19 @@ def is_invalid_event(config:Config, after_data, logger):
     return False
 
 def is_duplicate_event(config:Config, frigate_event_id, logger):
-    columns = '*'
-    where = 'frigate_event_id = ?'
-    params = (frigate_event_id,)
-    results = select_from_table(config.db_path , config.table, columns,  where, params, logger )
-    if results and results[0]['matched'] is None:
+    results = get_plate(config, frigate_event_id, logger)
+    if results and results[0]['is_watched_plate_matched'] is None:
         return False
-    elif results and results[0]['matched'] is not None:
+    elif results and results[0]['is_watched_plate_matched'] is not None:
         return True
     elif not results:
         return False
 
 def is_plate_matched_for_event(config, frigate_event_id, logger):
-    columns = '*'
-    where = 'frigate_event_id = ?'
-    params = (frigate_event_id,)
-    results = select_from_table(config.db_path , config.table, columns,  where, params, logger )
-    if results and results[0]['matched'] is None:
+    results = get_plate(config, frigate_event_id, logger)
+    if results and results[0]['is_watched_plate_matched'] is None:
         return False
-    elif results and results[0]['matched'] is not None:
+    elif results and results[0]['is_watched_plate_matched'] is not None:
         return True
     elif not results:
         return False

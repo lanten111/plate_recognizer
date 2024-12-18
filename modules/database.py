@@ -10,10 +10,10 @@ def setup_db(config):
             frigate_event_id TEXT NOT NULL UNIQUE,
             camera_name TEXT,       
             detected_plate TEXT,                 
-            matched_plate TEXT,    
-            vehicle_detected BOOLEAN,            
+            matched_watched_plate TEXT,    
+            is_watched_plate_matched BOOLEAN,            
             watched_plates TEXT,                       
-            trigger_zone_reached BOOLEAN,
+            is_trigger_zone_reached BOOLEAN,
             trigger_zones TEXT,
             entered_zones TEXT,
             vehicle_direction TEXT,               
@@ -130,8 +130,9 @@ def delete_from_table(db_file, table, where, params, logger):
 
 
 
-def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_plate=None, matched_plate=None, detection_time=None, fuzzy_score=None, vehicle_detected=None,
-                           vehicle_direction=None, trigger_zone_reached=None, trigger_zones=None, entered_zones=None, image_path=None, logger=None):
+def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_plate=None, matched_watched_plate=None, watched_plates = None,
+                           detection_time=None, fuzzy_score=None, vehicle_direction=None,is_watched_plate_matched=None,
+                           is_trigger_zone_reached=None, trigger_zones=None, entered_zones=None, image_path=None, logger=None):
     logger.info(f"storing plate({detected_plate}) in db for event {frigate_event_id}")
 
     # Query to check if the record exists
@@ -148,13 +149,14 @@ def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_
         if detected_plate is not None: set_columns['detected_plate'] = detected_plate
         if camera_name is not None: set_columns['camera_name'] = camera_name
         if vehicle_direction is not None: set_columns['vehicle_direction'] = vehicle_direction
-        if matched_plate is not None: set_columns['matched_plate'] = matched_plate.number
-        if vehicle_detected is not None: set_columns['vehicle_detected'] = vehicle_detected
-        if trigger_zone_reached is not None: set_columns['trigger_zone_reached'] = trigger_zone_reached
+        if matched_watched_plate is not None: set_columns['matched_watched_plate'] = matched_watched_plate.number
+        if is_watched_plate_matched is not None: set_columns['is_watched_plate_matched'] = is_watched_plate_matched
+        if is_trigger_zone_reached is not None: set_columns['is_trigger_zone_reached'] = is_trigger_zone_reached
         if trigger_zones is not None: set_columns['trigger_zones'] = json.dumps(trigger_zones)
         if entered_zones is not None: set_columns['entered_zones'] = json.dumps(entered_zones)
-        if matched_plate and matched_plate.owner is not None: set_columns['vehicle_owner'] = matched_plate.owner
-        if matched_plate and matched_plate.car_brand is not None: set_columns['vehicle_brand'] = matched_plate.car_brand
+        # if watched_plates is not None: set_columns['watched_plates'] = json.dumps(watched_plates)
+        if matched_watched_plate and matched_watched_plate.owner is not None: set_columns['vehicle_owner'] = matched_watched_plate.owner
+        if matched_watched_plate and matched_watched_plate.car_brand is not None: set_columns['vehicle_brand'] = matched_watched_plate.car_brand
         if image_path is not None: set_columns['image_path'] = image_path
 
         set_clause = ', '.join([f"{key} = ?" for key in set_columns.keys()])
@@ -186,30 +188,30 @@ def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_
         if camera_name is not None:
             insert_columns.append('camera_name')
             insert_values.append(camera_name)
-        if matched_plate is not None:
-            insert_columns.append('matched_plate')
-            insert_values.append(matched_plate.number)
-        if config.watched_plates is not None:
+        if matched_watched_plate is not None:
+            insert_columns.append('matched_watched_plate')
+            insert_values.append(matched_watched_plate.number)
+        if watched_plates is not None:
             insert_columns.append('watched_plates')
             insert_values.append(json.dumps(config.watched_plates))
-        if vehicle_detected is not None:
-            insert_columns.append('vehicle_detected')
-            insert_values.append(vehicle_detected)
-        if trigger_zone_reached is not None:
+        if is_watched_plate_matched is not None:
+            insert_columns.append('is_watched_plate_matched')
+            insert_values.append(is_watched_plate_matched)
+        if is_trigger_zone_reached is not None:
             insert_columns.append('trigger_zone_reached')
-            insert_values.append(trigger_zone_reached)
+            insert_values.append(is_trigger_zone_reached)
         if trigger_zones is not None:
             insert_columns.append('trigger_zones')
             insert_values.append(json.dumps(trigger_zones))
         if entered_zones is not None:
             insert_columns.append('entered_zones')
             insert_values.append(json.dumps(entered_zones))
-        if matched_plate and matched_plate.owner is not None:
+        if matched_watched_plate and matched_watched_plate.owner is not None:
             insert_columns.append('vehicle_owner')
-            insert_values.append(matched_plate.owner)
-        if matched_plate and matched_plate.car_brand is not None:
+            insert_values.append(matched_watched_plate.owner)
+        if matched_watched_plate and matched_watched_plate.car_brand is not None:
             insert_columns.append('vehicle_brand')
-            insert_values.append(matched_plate.car_brand)
+            insert_values.append(matched_watched_plate.car_brand)
         if image_path is not None:
             insert_columns.append('image_path')
             insert_values.append(image_path)
@@ -218,4 +220,16 @@ def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_
         results = insert_into_table(config.db_path, config.table, insert_columns, insert_values, logger)
         logger.info(f"inserted db for event {frigate_event_id}.")
 
-    return results[0]
+    return results
+
+def get_plate(config, frigate_event_id, logger):
+    try:
+        logger.info(f"getting plate from db for event {frigate_event_id}.")
+        columns = '*'
+        where = 'frigate_event_id = ?'
+        params = (frigate_event_id,)
+        results = select_from_table(config.db_path , config.table, columns,  where, params, logger)
+        return results
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error: {e}")
+        result = None

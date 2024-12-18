@@ -1,30 +1,35 @@
 import base64
 import json
+import time
 from dataclasses import asdict
-from datetime import time
 
-from modules.database import select_from_table
+from modules.database import get_plate
 
 
-def send_mqtt_message(config, payload,  mqtt_client, logger):
-    logger.info(f"sending mqtt message for  plate({payload.get('detected_plate')}")
-
+def send_mqtt_message(config, frigate_event_id,  mqtt_client, logger):
+    logger.info(f"sending mqtt message for  event ({frigate_event_id}")
+    payload = get_plate(config, frigate_event_id, logger)
+    if payload:
+        payload = payload[0]
+    else:
+        logger.error(f"Bad payload supplied")
+        return
     def watched_plates_to_json(watched_plates) -> str:
         plates_as_dicts = [asdict(plate) for plate in watched_plates]
         return json.dumps(plates_as_dicts, indent=4)
 
     vehicle_data = {
         'fuzzy_score': payload.get('fuzzy_score'),
-        'is_watched_plate_match': bool(payload.get('is_watched_plate_match')),
+        'is_watched_plate_matched': bool(payload.get('is_watched_plate_matched')),
         'is_trigger_zone_reached': bool(payload.get('is_trigger_zone_reached')),
+        'detected_plate': str(payload.get('detected_plate')).upper() ,
+        # 'watched_plates': watched_plates_to_json(payload.get('watched_plates')) ,
+        'matched_watched_plate': payload.get('matched_watched_plate') ,
         'entered_zones': payload.get('entered_zones'),
         'trigger_zones':  payload.get('trigger_zones'),
-        'detected_plate': str(payload.get('detected_plate')).upper() ,
         'frigate_event_id':  payload.get('frigate_event_id'),
-        'watched_plates': watched_plates_to_json(payload.get('watched_plates')) ,
         'camera_name': payload.get('camera_name'),
         "plate_image":  payload.get('image_path'),
-        'detected_watched_plate_match': str(payload.get('detected_watched_plate_match')).upper() ,
         'vehicle_direction': payload.get('vehicle_direction'),
         "vehicle_owner":  payload.get('vehicle_owner'),
         "vehicle_brand":  payload.get('vehicle_brand')
@@ -37,14 +42,14 @@ def send_mqtt_message(config, payload,  mqtt_client, logger):
     vehicle_data['plate_image'] = encode_image_to_base64(payload.get('image_path'))
 
     device_config = {
-        "name": "Plate Detection",
+        "name": f"{payload.get('camera_name')} Plate Detection",
         "identifiers": "License Plate Detection",
         "manufacturer": config.manufacturer,
         "sw_version": "1.0"
     }
 
     for key, value in vehicle_data.items():
-        if key == "matched" or key == "trigger_zone_reached":
+        if key == "is_watched_plate_matched" or key == "is_trigger_zone_reached":
             # Binary Sensor Configuration
             discovery_topic = f"homeassistant/binary_sensor/vehicle_data/{key}/config"
             state_topic = f"homeassistant/binary_sensor/vehicle_data/{key}/state"
@@ -58,10 +63,8 @@ def send_mqtt_message(config, payload,  mqtt_client, logger):
                 "unique_id": f"vehicle_binary_sensor_{key}",
                 "device": device_config
             }
-            logger.info(f"sending mqtt on")
             config.executor.submit(publish_message,config, discovery_topic, state_topic, payload, value, mqtt_client, logger)
-            if value is True:
-                config.executor.submit(reset_binary_sensor_state_after_delay,config, state_topic, config.watched_binary_sensor_reset_in_sec, False, mqtt_client, logger)
+            config.executor.submit(reset_binary_sensor_state_after_delay,config, state_topic, config.binary_sensor_reset_in_sec, False, mqtt_client, logger)
 
 
         elif key == "plate_image":
