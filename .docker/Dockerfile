@@ -18,6 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 # Set environment variable
 ENV LOCAL=false
+ENV TZ=Africa/Johannesburg
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH="${PYTHONPATH}:/usr/src/app"
 

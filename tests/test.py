@@ -153,7 +153,7 @@ class TestRunMqttClient(BaseTestCase):
         index._LOGGER = MagicMock()
 
         # Call the function
-        index.run_mqtt_client()
+        index.initiate_mqtt_receiver()
 
         mock_mqtt_client.assert_called()
 

@@ -3,9 +3,12 @@ from xmlrpc.client import Error
 
 import paho.mqtt.client as mqtt
 
+from logger import setup_logger
 from modules.frigate import process_message
 
-def run_mqtt_client(config, logger):
+logger = setup_logger(__name__)
+
+def initiate_mqtt_receiver(config):
 
     logger.info(f"Starting MQTT client. Connecting to: {config.mqtt_server}")
 
@@ -26,23 +29,20 @@ def run_mqtt_client(config, logger):
     mqtt_client.loop_forever()
 
 def on_message(mqtt_client, userdata, message):
-    logger = userdata.get("logger")
     config = userdata.get("config")
     try:
-        process_message(config, message, mqtt_client, logger)
+        process_message(config, message, mqtt_client)
     except Exception as e:
         logger.error(f"Something went wrong processing event: {e}")
         raise Error(e)
 
 def on_connect(mqtt_client, userdata, flags, reason_code, properties):
-    logger = userdata.get("logger")
     config = userdata.get("config")
 
     logger.info("MQTT Connected")
     mqtt_client.subscribe(config.main_topic + "/events")
 
 def on_disconnect(mqtt_client, userdata, flags, reason_code, properties):
-    logger = userdata.get("logger")
     if reason_code != 0:
         logger.warning(f"Unexpected disconnection, trying to reconnect userdata:{userdata}, flags:{flags}, properties:{properties}")
         while True:

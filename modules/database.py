@@ -1,6 +1,10 @@
 import json
 import sqlite3
 
+from logger import setup_logger
+
+logger = setup_logger(__name__)
+
 def setup_db(config):
     conn = sqlite3.connect(config.db_path)
     cursor = conn.cursor()
@@ -29,7 +33,7 @@ def setup_db(config):
     conn.close()
 
 
-def execute_query(db_file, query, params=None, logger=None):
+def execute_query(db_file, query, params=None):
     """
     Executes a query (SELECT, INSERT, UPDATE, DELETE) on the SQLite database.
 
@@ -67,7 +71,7 @@ def execute_query(db_file, query, params=None, logger=None):
 
     return result
 
-def select_from_table(db_file, table, columns='*', where=None, params=None, logger=None):
+def select_from_table(db_file, table, columns='*', where=None, params=None):
     """
     Executes a SELECT query on a specified table.
 
@@ -83,9 +87,9 @@ def select_from_table(db_file, table, columns='*', where=None, params=None, logg
     if where:
         query += f" WHERE {where}"
 
-    return execute_query(db_file, query, params, logger)
+    return execute_query(db_file, query, params)
 
-def insert_into_table(db_file, table, columns, values, logger):
+def insert_into_table(db_file, table, columns, values):
     """
     Executes an INSERT query on a specified table.
 
@@ -97,9 +101,9 @@ def insert_into_table(db_file, table, columns, values, logger):
     :return: None
     """
     query = f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({', '.join(['?'] * len(values))})"
-    return execute_query(db_file, query, values, logger)
+    return execute_query(db_file, query, values)
 
-def update_table(db_file, table, set_clause, where, params, logger=None):
+def update_table(db_file, table, set_clause, where, params):
     """
     Executes an UPDATE query on a specified table.
 
@@ -112,9 +116,9 @@ def update_table(db_file, table, set_clause, where, params, logger=None):
     :return: None
     """
     query = f"UPDATE {table} SET {set_clause} WHERE {where}"
-    return execute_query(db_file, query, params, logger)
+    return execute_query(db_file, query, params)
 
-def delete_from_table(db_file, table, where, params, logger):
+def delete_from_table(db_file, table, where, params):
     """
     Executes a DELETE query on a specified table.
 
@@ -126,20 +130,20 @@ def delete_from_table(db_file, table, where, params, logger):
     :return: None
     """
     query = f"DELETE FROM {table} WHERE {where}"
-    return execute_query(db_file, query, params, logger)
+    return execute_query(db_file, query, params)
 
 
 
 def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_plate=None, matched_watched_plate=None, watched_plates = None,
                            detection_time=None, fuzzy_score=None, vehicle_direction=None,is_watched_plate_matched=None,
-                           is_trigger_zone_reached=None, trigger_zones=None, entered_zones=None, image_path=None, logger=None):
+                           is_trigger_zone_reached=None, trigger_zones=None, entered_zones=None, image_path=None):
     logger.info(f"storing plate({detected_plate}) in db for event {frigate_event_id}")
 
     # Query to check if the record exists
     columns = '*'
     where = 'frigate_event_id = ?'
     params = (frigate_event_id,)
-    results = select_from_table(config.db_path, config.table, columns, where, params, logger)
+    results = select_from_table(config.db_path, config.table, columns, where, params)
 
     if results:
         # Update the record if it exists
@@ -163,7 +167,7 @@ def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_
         params = tuple(set_columns.values()) + (frigate_event_id,)
 
         where = 'frigate_event_id = ?'
-        results = update_table(config.db_path, config.table, set_clause, where, params, logger)
+        results = update_table(config.db_path, config.table, set_clause, where, params)
         logger.info(f"updated db for event {frigate_event_id}.")
     else:
         # Insert a new record if it doesn't exist
@@ -217,18 +221,18 @@ def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_
             insert_values.append(image_path)
 
         # Only insert the provided columns and values
-        results = insert_into_table(config.db_path, config.table, insert_columns, insert_values, logger)
+        results = insert_into_table(config.db_path, config.table, insert_columns, insert_values)
         logger.info(f"inserted db for event {frigate_event_id}.")
 
     return results
 
-def get_plate(config, frigate_event_id, logger):
+def get_plate(config, frigate_event_id):
     try:
         logger.info(f"getting plate from db for event {frigate_event_id}.")
         columns = '*'
         where = 'frigate_event_id = ?'
         params = (frigate_event_id,)
-        results = select_from_table(config.db_path , config.table, columns,  where, params, logger)
+        results = select_from_table(config.db_path , config.table, columns,  where, params)
         return results
     except sqlite3.Error as e:
         logger.error(f"SQLite error: {e}")

@@ -1,58 +1,58 @@
-import base64
 import difflib
-import json
 import os
 import time
 import uuid
 from copy import Error
-from dataclasses import asdict
 from datetime import datetime
 
 import cv2
 import numpy as np
 import requests
 
+from logger import setup_logger
 from modules.alpr import get_alpr, fast_alpr
 from modules.config import Config
-from modules.database import insert_into_table, select_from_table, update_table, create_or_update_plate, get_plate
+from modules.database import create_or_update_plate, get_plate
 from modules.mqtt.sender import send_mqtt_message
 
 event_type = None
 
-def process_plate_detection(config:Config, camera_name, frigate_event_id, entered_zones, mqtt_client, logger):
+logger = setup_logger(__name__)
+
+def process_plate_detection(config:Config, camera_name, frigate_event_id, entered_zones, mqtt_client):
     try:
         logger.info(f"start processing event {frigate_event_id}")
-        snapshot = get_latest_snapshot(config, frigate_event_id, camera_name, logger)
-        results = get_plate(config, frigate_event_id, logger)
+        snapshot = get_latest_snapshot(config, frigate_event_id, camera_name)
+        results = get_plate(config, frigate_event_id)
         # config.executor(save_image, config, config.debug_snapshot_path,  None, snapshot, camera_name, None, frigate_event_id, logger)
 
         if len(results) == 0 or (len(results) > 0 and (results[0].get('is_watched_plate_matched') is not None or bool(results[0].get('is_watched_plate_matched'))) is False) :
-            detected_plate, detected_plate_score = do_plate_detection(config, snapshot, logger)
-            matched_watched_plate, fuzzy_score, watched_plates = check_watched_plates(config, detected_plate, logger)
+            detected_plate, detected_plate_score = do_plate_detection(config, snapshot)
+            matched_watched_plate, fuzzy_score, watched_plates = check_watched_plates(config, detected_plate)
 
             if (matched_watched_plate is not None and fuzzy_score is not None) or config.fuzzy_match is None:
                 trigger_zones = config.camera.get(camera_name).trigger_zones
-                image_path = save_image(config, config.snapshot_path,  detected_plate_score, snapshot, camera_name, detected_plate, frigate_event_id, logger)
+                image_path = save_image(config, config.snapshot_path,  detected_plate_score, snapshot, camera_name, detected_plate, frigate_event_id)
                 logger.info(f"db storing plate or updating plate detection for event {frigate_event_id}")
                 create_or_update_plate(config, frigate_event_id, camera_name=camera_name,  detected_plate=detected_plate,
                                                  matched_watched_plate=matched_watched_plate, watched_plates=watched_plates, detection_time=datetime.now(),
                                                  fuzzy_score=fuzzy_score, is_watched_plate_matched=True, is_trigger_zone_reached=False, trigger_zones=trigger_zones ,
-                                                 entered_zones=entered_zones, image_path=image_path, logger=logger)
+                                                 entered_zones=entered_zones, image_path=image_path)
                 #wait for trigger zone to trigger the on condition
                 if len(config.camera.get(camera_name).trigger_zones) > 0:
                     if set(config.camera.get(camera_name).trigger_zones) & set(entered_zones):
                             logger.info(f"trigger zone {entered_zones} reached, sending a mqtt message({config.camera.get(camera_name).trigger_zones})")
                             logger.info(f"db storing plate or updating plate detection for event {frigate_event_id}")
-                            create_or_update_plate(config, frigate_event_id, is_trigger_zone_reached=True, entered_zones=entered_zones, logger=logger)
-                            send_mqtt_message(config , frigate_event_id,  mqtt_client, logger)
+                            create_or_update_plate(config, frigate_event_id, is_trigger_zone_reached=True, entered_zones=entered_zones)
+                            send_mqtt_message(config , frigate_event_id,  mqtt_client)
                     else:
                         logger.info(f"trigger zone ({config.camera.get(camera_name).trigger_zones}) waiting for trigger zone ")
-                        send_mqtt_message(config , frigate_event_id,  mqtt_client, logger)
+                        send_mqtt_message(config , frigate_event_id,  mqtt_client)
                 else:
                         logger.info(f"no trigger zone present, sending mqtt message({config.camera.get(camera_name).trigger_zones})")
-                        send_mqtt_message(config , frigate_event_id , mqtt_client, logger)
-                config.executor.submit(delete_old_images, config.days_to_keep_images_in_days, config.debug_snapshot_path, logger)
-                config.executor.submit(delete_old_images, config.days_to_keep_images_in_days, config.snapshot_path, logger)
+                        send_mqtt_message(config , frigate_event_id , mqtt_client)
+                config.executor.submit(delete_old_images, config.days_to_keep_images_in_days, config.debug_snapshot_path)
+                config.executor.submit(delete_old_images, config.days_to_keep_images_in_days, config.snapshot_path)
                 logger.info(f"plate({detected_plate}) match found in watched plates ({matched_watched_plate}) for event {frigate_event_id}, {event_type} stops")
         else:
             logger.info(f"plate already found for event {frigate_event_id}, {event_type} skipping........")
@@ -60,7 +60,7 @@ def process_plate_detection(config:Config, camera_name, frigate_event_id, entere
         logger.error(f"Something went wrong processing event: {e}")
         raise Error(e)
 
-def get_latest_snapshot(config:Config, frigate_event_id, camera_name, logger):
+def get_latest_snapshot(config:Config, frigate_event_id, camera_name):
     logger.info(f"Getting snapshot for event: {frigate_event_id}")
     snapshot_url = f"{config.frigate_url}/api/{camera_name}/latest.jpg"
     logger.debug(f"event URL: {snapshot_url}")
@@ -69,8 +69,8 @@ def get_latest_snapshot(config:Config, frigate_event_id, camera_name, logger):
     snapshot = response.content
     return snapshot
 
-def get_vehicle_direction(config:Config,  after_data, frigate_event_id, logger):
-    results = get_plate(config, frigate_event_id, logger)
+def get_vehicle_direction(config:Config,  after_data, frigate_event_id):
+    results = get_plate(config, frigate_event_id)
     if len(after_data['current_zones']) > 0:
         if len(results) == 0 or (len(results) > 0 and results[0].get('vehicle_detected') =='unknown' or
                                  results['vehicle_detected'] is None):
@@ -85,8 +85,7 @@ def get_vehicle_direction(config:Config,  after_data, frigate_event_id, logger):
                         else:
                             vehicle_direction = 'unknown'
                         logger.info(f"db storing plate or updating vehicle direction  for event {frigate_event_id}")
-                        create_or_update_plate(config , frigate_event_id, vehicle_direction=vehicle_direction, logger=logger)
-                        # insert_into_table(config.db_path, config.table, columns, values, logger)
+                        create_or_update_plate(config , frigate_event_id, vehicle_direction=vehicle_direction)
                     else:
                         logger.info(f"skipping vehicle direction direction for {frigate_event_id}, missing first_zone and or last_zone in config.")
         else:
@@ -94,7 +93,7 @@ def get_vehicle_direction(config:Config,  after_data, frigate_event_id, logger):
     else:
         logger.info(f"skipping direction detection for event  {frigate_event_id} does not contain zone, ")
 
-def check_watched_plates(config:Config, detected_plate, logger):
+def check_watched_plates(config:Config, detected_plate):
     config_watched_plates = config.watched_plates
     if not config_watched_plates:
         logger.info("Skipping checking Watched Plates because watched_plates is not set")
@@ -105,7 +104,7 @@ def check_watched_plates(config:Config, detected_plate, logger):
         return None, None, None
 
     if config.fuzzy_match == 0:
-        logger.info(f"Skipping fuzzy matching because fuzzy_match value not set in config")
+        logger.info("Skipping fuzzy matching because fuzzy_match value not set in config")
         return None, None, None
 
     best_match, fuzzy_score = None, 0
@@ -123,7 +122,7 @@ def check_watched_plates(config:Config, detected_plate, logger):
         return None, None, None
 
 
-def save_image(config:Config, snapshot_path,  plate_score, snapshot, camera_name, plate_number, frigate_id, logger):
+def save_image(config:Config, snapshot_path,  plate_score, snapshot, camera_name, plate_number, frigate_id):
     timestamp = datetime.now().strftime(config.date_format)
     image_name = f"{camera_name}__{uuid.uuid4()}_{timestamp}.png"
     logger.info(f"{datetime.now()} saving  plate({plate_number}) image {image_name}")
@@ -135,7 +134,7 @@ def save_image(config:Config, snapshot_path,  plate_score, snapshot, camera_name
 
     image_array = np.frombuffer(snapshot, np.uint8)
     frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-    annotated_frame = get_alpr(config, logger).draw_predictions(frame)
+    annotated_frame = get_alpr(config).draw_predictions(frame)
     cv2.imwrite(image_path, annotated_frame)
 
     logger.info(f"successfully saved image with path: {image_path}")
@@ -150,16 +149,16 @@ def save_image(config:Config, snapshot_path,  plate_score, snapshot, camera_name
 #         logger.debug(f"{timestamp} saved snapshot {image_path}")
 
 
-def do_plate_detection(config:Config, snapshot, logger):
+def do_plate_detection(config:Config, snapshot):
     if config.fast_alpr:
-        detected_plate_number, detected_plate_score = fast_alpr(config, snapshot, logger)
+        detected_plate_number, detected_plate_score = fast_alpr(config, snapshot)
     else:
         logger.error("Plate Recognizer is not configured")
         return None, None, None, None
 
     return detected_plate_number, detected_plate_score
 
-def delete_old_images(days_to_keep_images_in_days, path, logger):
+def delete_old_images(days_to_keep_images_in_days, path):
 
     now = time.time()
     cutoff = now - (days_to_keep_images_in_days * 86400)  # 86400 seconds in a day

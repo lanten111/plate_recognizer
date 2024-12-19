@@ -3,18 +3,22 @@ import logging
 import time
 
 import requests
+
+from logger import setup_logger
 from modules.config import Config
-from modules.database import select_from_table, get_plate
+from modules.database import get_plate
 from modules.detection import get_vehicle_direction, process_plate_detection, create_or_update_plate
 from modules.mqtt.sender import send_mqtt_message
 
 event_type = None
 
-def process_message(config:Config, message, mqtt_client, logger):
+logger = setup_logger(__name__)
+
+def process_message(config:Config, message, mqtt_client):
 
     global event_type
     payload_dict = json.loads(message.payload)
-    logger.debug(f"MQTT message: {payload_dict}")
+    # logger.debug(f"MQTT message: {payload_dict}")
 
     before_data = payload_dict.get("before", {})
     after_data = payload_dict.get("after", {})
@@ -23,39 +27,38 @@ def process_message(config:Config, message, mqtt_client, logger):
 
     #add trigger for detectied
 
-    if is_invalid_event(config, after_data, logger):
+    if is_invalid_event(config, after_data):
         return
 
     logger.info(f"new message with status {event_type} for event id {frigate_event_id}")
-    config.executor.submit(trigger_detected_on_zone, config, after_data, mqtt_client, logger)
+    config.executor.submit(trigger_detected_on_zone, config, after_data, mqtt_client)
 
-    if is_duplicate_event(config, frigate_event_id, logger):
+    if is_duplicate_event(config, frigate_event_id):
         return
 
-    config.executor.submit(get_vehicle_direction, config, after_data, frigate_event_id, logger)
+    config.executor.submit(get_vehicle_direction, config, after_data, frigate_event_id)
 
     if event_type == "new":
         logger.info(f"Starting new thread for new event{event_type} for {frigate_event_id}***************")
-        config.executor.submit(begin_process, config, after_data, frigate_event_id, mqtt_client, logger)
+        config.executor.submit(begin_process, config, after_data, frigate_event_id, mqtt_client)
 
 
-def begin_process(config:Config, after_data, frigate_event_id, mqtt_client, logger):
+def begin_process(config:Config, after_data, frigate_event_id, mqtt_client):
     global event_type
     loop = 0
-    while event_type in ["update", "new"] and not is_plate_matched_for_event(config, frigate_event_id, logger):
+    while event_type in ["update", "new"] and not is_plate_matched_for_event(config, frigate_event_id):
         loop=loop + 1
         logger.info(f"start processing loop {loop} for {frigate_event_id}")
         # config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client, logger)
-        process_plate_detection(config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client, logger)
+        process_plate_detection(config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client)
         logger.info(f"Done processing loop {loop}, {event_type}")
         # time.sleep(0.2)
     logger.info(f"Done processing event {frigate_event_id}, {event_type}")
 
-def trigger_detected_on_zone(config, after_data, mqtt_client, logger):
-    logger = logging.getLogger(__name__)
+def trigger_detected_on_zone(config, after_data, mqtt_client):
     frigate_event_id = after_data["id"]
     entered_zones = after_data['entered_zones']
-    results = get_plate(config, frigate_event_id, logger)
+    results = get_plate(config, frigate_event_id)
     # remove is_watched_plate_matched in case a zone is reached before is_trigger_zone_reached
     if len(results) == 0 or (len(results) > 0 and results[0].get('is_trigger_zone_reached') != 1 or results[0].get('is_trigger_zone_reached') is None):
         for camera in config.camera:
@@ -64,9 +67,9 @@ def trigger_detected_on_zone(config, after_data, mqtt_client, logger):
                 if camera.lower() == results[0].get('camera_name'):
                     if set(trigger_zones) & set(entered_zones):
                         logger.info(f"db storing plate or updating for trigger zone for event {frigate_event_id}")
-                        create_or_update_plate(config, frigate_event_id, is_trigger_zone_reached=True, entered_zones=entered_zones, logger=logger)
+                        create_or_update_plate(config, frigate_event_id, is_trigger_zone_reached=True, entered_zones=entered_zones)
                         logger.info(f"trigger zone ({config.camera.get(camera).trigger_zones})  reached, sending a mqtt message {trigger_zones}")
-                        send_mqtt_message(config , frigate_event_id , mqtt_client, logger)
+                        send_mqtt_message(config , frigate_event_id , mqtt_client)
                     else:
                         logger.info(f"trigger zone {trigger_zones} not reached, current reached {entered_zones}")
                 else:
@@ -77,7 +80,7 @@ def trigger_detected_on_zone(config, after_data, mqtt_client, logger):
         logger.info(f"No entry in db for event {frigate_event_id} or plate not matched")
 
 
-def is_invalid_event(config:Config, after_data, logger):
+def is_invalid_event(config:Config, after_data):
 
     # config_zones = config['frigate'].get('zones', [])
     config_zones = []
@@ -97,8 +100,8 @@ def is_invalid_event(config:Config, after_data, logger):
 
     return False
 
-def is_duplicate_event(config:Config, frigate_event_id, logger):
-    results = get_plate(config, frigate_event_id, logger)
+def is_duplicate_event(config:Config, frigate_event_id):
+    results = get_plate(config, frigate_event_id)
     if results and results[0]['is_watched_plate_matched'] is None:
         return False
     elif results and results[0]['is_watched_plate_matched'] is not None:
@@ -106,8 +109,8 @@ def is_duplicate_event(config:Config, frigate_event_id, logger):
     elif not results:
         return False
 
-def is_plate_matched_for_event(config, frigate_event_id, logger):
-    results = get_plate(config, frigate_event_id, logger)
+def is_plate_matched_for_event(config, frigate_event_id):
+    results = get_plate(config, frigate_event_id)
     if results and results[0]['is_watched_plate_matched'] is None:
         return False
     elif results and results[0]['is_watched_plate_matched'] is not None:
@@ -115,7 +118,7 @@ def is_plate_matched_for_event(config, frigate_event_id, logger):
     elif not results:
         return False
 
-def get_snapshot(config:Config, frigate_event_id, cropped, camera_name, logger):
+def get_snapshot(config:Config, frigate_event_id, cropped, camera_name):
     logger.debug(f"Getting snapshot for event: {frigate_event_id}, Crop: {cropped}")
     snapshot_url = f"{config.frigate_url}/api/events/{frigate_event_id}/snapshot-clean.png"
     logger.debug(f"event URL: {snapshot_url}")

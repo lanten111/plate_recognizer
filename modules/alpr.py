@@ -2,10 +2,12 @@ import cv2
 import numpy as np
 from fast_alpr import ALPR
 
+from logger import setup_logger
 from modules.config import Config
 
+logger = setup_logger(__name__)
 
-def get_alpr(config:Config, logger):
+def get_alpr(config:Config):
     plate_detector_model = config.fast_alpr.plate_detector_model
     ocr_model = config.fast_alpr.ocr_model
     return ALPR(
@@ -13,11 +15,11 @@ def get_alpr(config:Config, logger):
         ocr_model=ocr_model,ocr_device="cpu"
     )
 
-def fast_alpr(config, snapshot, logger):
+def fast_alpr(config, snapshot):
     image_array = np.frombuffer(snapshot, np.uint8)
     frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
 
-    alpr_results = get_alpr(config, logger).predict(frame)
+    alpr_results = get_alpr(config).predict(frame)
 
     logger.info(f"detection results {alpr_results}")
 
