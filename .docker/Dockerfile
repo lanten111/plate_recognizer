@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV LOCAL=false
 ENV TZ=Africa/Johannesburg
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH="${PYTHONPATH}:/usr/src/app"
+ENV PYTHONPATH=/usr/src/app"
 
 # Create necessary directories
 RUN mkdir -p /plates /config
