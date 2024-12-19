@@ -2,7 +2,7 @@ import os
 
 import sys
 
-from logger import setup_logger
+from modules.logger import setup_logger
 from modules.config import get_yaml_config
 from modules.database import setup_db
 from modules.mqtt.receiver import initiate_mqtt_receiver

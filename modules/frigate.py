@@ -1,10 +1,8 @@
 import json
-import logging
-import time
 
 import requests
 
-from logger import setup_logger
+from modules.logger import setup_logger
 from modules.config import Config
 from modules.database import get_plate
 from modules.detection import get_vehicle_direction, process_plate_detection, create_or_update_plate

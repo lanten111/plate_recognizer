@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 import requests
 
-from logger import setup_logger
+from modules.logger import setup_logger
 from modules.alpr import get_alpr, fast_alpr
 from modules.config import Config
 from modules.database import create_or_update_plate, get_plate

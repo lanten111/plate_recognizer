@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from fast_alpr import ALPR
 
-from logger import setup_logger
+from modules.logger import setup_logger
 from modules.config import Config
 
 logger = setup_logger(__name__)

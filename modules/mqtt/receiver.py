@@ -3,7 +3,7 @@ from xmlrpc.client import Error
 
 import paho.mqtt.client as mqtt
 
-from logger import setup_logger
+from modules.logger import setup_logger
 from modules.frigate import process_message
 
 logger = setup_logger(__name__)

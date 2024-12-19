@@ -2,9 +2,8 @@ import base64
 import json
 import time
 from aifc import Error
-from dataclasses import asdict
 
-from logger import setup_logger
+from modules.logger import setup_logger
 from modules.database import get_plate
 
 logger = setup_logger(__name__)

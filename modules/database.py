@@ -1,7 +1,7 @@
 import json
 import sqlite3
 
-from logger import setup_logger
+from modules.logger import setup_logger
 
 logger = setup_logger(__name__)
 
