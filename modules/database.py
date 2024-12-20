@@ -137,7 +137,7 @@ def delete_from_table(db_file, table, where, params):
 def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_plate=None, matched_watched_plate=None, watched_plates = None,
                            detection_time=None, fuzzy_score=None, vehicle_direction=None,is_watched_plate_matched=None,
                            is_trigger_zone_reached=None, trigger_zones=None, entered_zones=None, image_path=None):
-    logger.info(f"storing plate({detected_plate}) in db for event {frigate_event_id}")
+
 
     # Query to check if the record exists
     columns = '*'
@@ -146,7 +146,7 @@ def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_
     results = select_from_table(config.db_path, config.table, columns, where, params)
 
     if results:
-        # Update the record if it exists
+        logger.info(f"updating plate in db for event {frigate_event_id}")
         set_columns = {}
         if detection_time is not None: set_columns['detection_time'] = detection_time
         if fuzzy_score is not None: set_columns['fuzzy_score'] = fuzzy_score
@@ -170,7 +170,7 @@ def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_
         results = update_table(config.db_path, config.table, set_clause, where, params)
         logger.info(f"updated db for event {frigate_event_id}.")
     else:
-        # Insert a new record if it doesn't exist
+        logger.info(f"creating plate entry for event {frigate_event_id} in db")
         insert_columns = []
         insert_values = []
 

@@ -38,22 +38,16 @@ def process_plate_detection(config:Config, camera_name, frigate_event_id, entere
                                                  matched_watched_plate=matched_watched_plate, watched_plates=watched_plates, detection_time=datetime.now(),
                                                  fuzzy_score=fuzzy_score, is_watched_plate_matched=True, is_trigger_zone_reached=False, trigger_zones=trigger_zones ,
                                                  entered_zones=entered_zones, image_path=image_path)
-                #wait for trigger zone to trigger the on condition
+                send_mqtt_message(config , frigate_event_id , mqtt_client)
                 if len(config.camera.get(camera_name).trigger_zones) > 0:
+                    logger.info(f"trigger zone ({config.camera.get(camera_name).trigger_zones}) found")
                     if set(config.camera.get(camera_name).trigger_zones) & set(entered_zones):
-                            logger.info(f"trigger zone {entered_zones} reached, sending a mqtt message({config.camera.get(camera_name).trigger_zones})")
-                            logger.info(f"db storing plate or updating plate detection for event {frigate_event_id}")
+                            logger.info(f"trigger zone ({config.camera.get(camera_name).trigger_zones}) reached, current zones {entered_zones}")
                             create_or_update_plate(config, frigate_event_id, is_trigger_zone_reached=True, entered_zones=entered_zones)
                             send_mqtt_message(config , frigate_event_id,  mqtt_client)
-                    else:
-                        logger.info(f"trigger zone ({config.camera.get(camera_name).trigger_zones}) waiting for trigger zone ")
-                        send_mqtt_message(config , frigate_event_id,  mqtt_client)
-                else:
-                        logger.info(f"no trigger zone present, sending mqtt message({config.camera.get(camera_name).trigger_zones})")
-                        send_mqtt_message(config , frigate_event_id , mqtt_client)
                 config.executor.submit(delete_old_images, config.days_to_keep_images_in_days, config.debug_snapshot_path)
                 config.executor.submit(delete_old_images, config.days_to_keep_images_in_days, config.snapshot_path)
-                logger.info(f"plate({detected_plate}) match found in watched plates ({matched_watched_plate}) for event {frigate_event_id}, {event_type} stops")
+                logger.info(f"plate({detected_plate}) match found in watched plates ({matched_watched_plate}) for event {frigate_event_id}, {event_type} stoping...")
         else:
             logger.info(f"plate already found for event {frigate_event_id}, {event_type} skipping........")
     except Exception as e:
@@ -72,19 +66,20 @@ def get_latest_snapshot(config:Config, frigate_event_id, camera_name):
 def get_vehicle_direction(config:Config,  after_data, frigate_event_id):
     results = get_plate(config, frigate_event_id)
     if len(after_data['current_zones']) > 0:
-        if len(results) == 0 or (len(results) > 0 and results[0].get('vehicle_detected') =='unknown' or
-                                 results['vehicle_detected'] is None):
+        if len(results) == 0 or (len(results) > 0 and results[0].get('vehicle_detected') =='unknown' or results['vehicle_detected'] is None):
             current_zone = after_data['current_zones'][0]
             for camera in config.camera:
                 if camera == after_data['camera']:
                     if config.camera.get(camera).direction.first_zone and config.camera.get(camera).direction.last_zone:
                         if current_zone.lower() == config.camera.get(camera).direction.first_zone.lower():
                             vehicle_direction  = 'entering'
+                            logger.debug(f"setting  vehicle_direction {vehicle_direction}")
                         elif current_zone.lower() == config.camera.get(camera).direction.last_zone.lower():
                             vehicle_direction  = 'exiting'
+                            logger.debug(f"setting  vehicle_direction {vehicle_direction}")
                         else:
                             vehicle_direction = 'unknown'
-                        logger.info(f"db storing plate or updating vehicle direction  for event {frigate_event_id}")
+                            logger.debug(f"setting  vehicle_direction {vehicle_direction}")
                         create_or_update_plate(config , frigate_event_id, vehicle_direction=vehicle_direction)
                     else:
                         logger.info(f"skipping vehicle direction direction for {frigate_event_id}, missing first_zone and or last_zone in config.")

@@ -62,20 +62,19 @@ def trigger_detected_on_zone(config, after_data, mqtt_client):
         for camera in config.camera:
             trigger_zones = config.camera.get(camera).trigger_zones
             if len(config.camera.get(camera).trigger_zones) > 0:
-                if camera.lower() == results[0].get('camera_name'):
+                if camera.lower() == results[0].get('camera_name').lower():
                     if set(trigger_zones) & set(entered_zones):
-                        logger.info(f"db storing plate or updating for trigger zone for event {frigate_event_id}")
                         create_or_update_plate(config, frigate_event_id, is_trigger_zone_reached=True, entered_zones=entered_zones)
-                        logger.info(f"trigger zone ({config.camera.get(camera).trigger_zones})  reached, sending a mqtt message {trigger_zones}")
+                        logger.info(f"trigger zone ({config.camera.get(camera).trigger_zones}) reached, current zones {entered_zones}")
                         send_mqtt_message(config , frigate_event_id , mqtt_client)
                     else:
                         logger.info(f"trigger zone {trigger_zones} not reached, current reached {entered_zones}")
                 else:
                     logger.info(f"current camera does not match {camera}, current reached {results[0].get('camera_name')}")
             else:
-                logger.info(f"trigger zones empty, skipping")
+                logger.info("trigger zones empty, skipping trigger zone detection")
     else:
-        logger.info(f"No entry in db for event {frigate_event_id} or plate not matched")
+        logger.info(f"trigger zone status already {results[0].get('is_trigger_zone_reached')} for event {frigate_event_id}")
 
 
 def is_invalid_event(config:Config, after_data):
