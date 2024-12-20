@@ -39,12 +39,14 @@ def process_plate_detection(config:Config, camera_name, frigate_event_id, entere
                                                  fuzzy_score=fuzzy_score, is_watched_plate_matched=True, is_trigger_zone_reached=False, trigger_zones=trigger_zones ,
                                                  entered_zones=entered_zones, image_path=image_path)
                 send_mqtt_message(config , frigate_event_id , mqtt_client)
+                # config.executor.submit(send_mqtt_message, config , frigate_event_id , mqtt_client)
                 if len(config.camera.get(camera_name).trigger_zones) > 0:
                     logger.info(f"trigger zone ({config.camera.get(camera_name).trigger_zones}) found")
                     if set(config.camera.get(camera_name).trigger_zones) & set(entered_zones):
                             logger.info(f"trigger zone ({config.camera.get(camera_name).trigger_zones}) reached, current zones {entered_zones}")
                             create_or_update_plate(config, frigate_event_id, is_trigger_zone_reached=True, entered_zones=entered_zones)
-                            send_mqtt_message(config , frigate_event_id,  mqtt_client)
+                            send_mqtt_message(config , frigate_event_id , mqtt_client)
+                            # config.executor.submit(send_mqtt_message, config , frigate_event_id , mqtt_client)
                 config.executor.submit(delete_old_images, config.days_to_keep_images_in_days, config.debug_snapshot_path)
                 config.executor.submit(delete_old_images, config.days_to_keep_images_in_days, config.snapshot_path)
                 logger.info(f"plate({detected_plate}) match found in watched plates ({matched_watched_plate}) for event {frigate_event_id}, {event_type} stoping...")

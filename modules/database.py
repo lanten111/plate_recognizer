@@ -228,7 +228,7 @@ def create_or_update_plate(config, frigate_event_id, camera_name=None, detected_
 
 def get_plate(config, frigate_event_id):
     try:
-        logger.info(f"getting plate from db for event {frigate_event_id}.")
+        # logger.info(f"getting plate from db for event {frigate_event_id}.")
         columns = '*'
         where = 'frigate_event_id = ?'
         params = (frigate_event_id,)

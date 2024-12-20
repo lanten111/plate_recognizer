@@ -96,7 +96,7 @@ def get_yaml_config() -> Config:
     debug_snapshot_path = resolve_path(data.get('plate_recogniser', {}).get('debug_snapshot_path', 'debug_snapshot'))
     snapshot_path = resolve_path(data.get('plate_recogniser', {}).get('snapshot_path', 'snapshots'))
 
-    executor = ThreadPoolExecutor(max_workers=20)
+    executor = ThreadPoolExecutor(max_workers=50)
     date_format = "%Y-%m-%d_%H-%M-%S"
     default_objects = ['car', 'motorcycle', 'bus']
     table = "plates"

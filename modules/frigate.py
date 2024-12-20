@@ -1,4 +1,5 @@
 import json
+import time
 
 import requests
 
@@ -28,7 +29,7 @@ def process_message(config:Config, message, mqtt_client):
     if is_invalid_event(config, after_data):
         return
 
-    logger.info(f"new message with status {event_type} for event id {frigate_event_id}")
+    logger.info(f"new message with status {event_type} for event id {frigate_event_id} and zone {after_data['entered_zones']}")
     config.executor.submit(trigger_detected_on_zone, config, after_data, mqtt_client)
 
     if is_duplicate_event(config, frigate_event_id):
@@ -47,10 +48,10 @@ def begin_process(config:Config, after_data, frigate_event_id, mqtt_client):
     while event_type in ["update", "new"] and not is_plate_matched_for_event(config, frigate_event_id):
         loop=loop + 1
         logger.info(f"start processing loop {loop} for {frigate_event_id}")
-        # config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client, logger)
-        process_plate_detection(config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client)
+        config.executor.submit(process_plate_detection ,config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client)
+        # process_plate_detection(config,  after_data['camera'], frigate_event_id, after_data['entered_zones'], mqtt_client)
         logger.info(f"Done processing loop {loop}, {event_type}")
-        # time.sleep(0.2)
+        time.sleep(0.5)
     logger.info(f"Done processing event {frigate_event_id}, {event_type}")
 
 def trigger_detected_on_zone(config, after_data, mqtt_client):
@@ -58,7 +59,7 @@ def trigger_detected_on_zone(config, after_data, mqtt_client):
     entered_zones = after_data['entered_zones']
     results = get_plate(config, frigate_event_id)
     # remove is_watched_plate_matched in case a zone is reached before is_trigger_zone_reached
-    if len(results) == 0 or (len(results) > 0 and results[0].get('is_trigger_zone_reached') != 1 or results[0].get('is_trigger_zone_reached') is None):
+    if len(results) > 0 and results[0].get('is_trigger_zone_reached') != 1 or results[0].get('is_trigger_zone_reached') is None:
         for camera in config.camera:
             trigger_zones = config.camera.get(camera).trigger_zones
             if len(config.camera.get(camera).trigger_zones) > 0:
@@ -66,7 +67,7 @@ def trigger_detected_on_zone(config, after_data, mqtt_client):
                     if set(trigger_zones) & set(entered_zones):
                         create_or_update_plate(config, frigate_event_id, is_trigger_zone_reached=True, entered_zones=entered_zones)
                         logger.info(f"trigger zone ({config.camera.get(camera).trigger_zones}) reached, current zones {entered_zones}")
-                        send_mqtt_message(config , frigate_event_id , mqtt_client)
+                        config.executor.submit(send_mqtt_message, config , frigate_event_id , mqtt_client)
                     else:
                         logger.info(f"trigger zone {trigger_zones} not reached, current reached {entered_zones}")
                 else:
